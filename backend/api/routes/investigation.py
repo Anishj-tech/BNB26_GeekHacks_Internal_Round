@@ -32,6 +32,7 @@ try:
     from backend.fusion.trust_engine import TrustEngine
     from backend.explanation.gemini import GeminiExplanationService
     from backend.preprocessing.video import PreprocessingService
+    from backend.models.video_detector import VideoDetector
 except ImportError:
     from analysis.evidence import (
         Assessment,
@@ -46,6 +47,7 @@ except ImportError:
     from fusion.trust_engine import TrustEngine
     from explanation.gemini import GeminiExplanationService
     from preprocessing.video import PreprocessingService
+    from models.video_detector import VideoDetector
 
 
 router = APIRouter(tags=["investigation"])
@@ -155,9 +157,105 @@ async def run_investigation(
     video_path = video_ref if video_ref else "mock_video_input"
     preprocessing_service.process(video_path=video_path)
 
-    # Step 2: Generate / retrieve mock multimodal evidence
-    # Note: ML analysis from preprocessed video will be hooked in a later step.
-    evidence = create_mock_evidence()
+    # Step 2: Evidence generation
+    timeline: list[TimelineItem] = []
+
+    if video_ref is not None:
+        # Step 16: Real ML Video Analysis via VideoDetector
+        detector = VideoDetector()
+        video_result = detector.analyze_video(
+            video_path=video_ref,
+            include_face_consistency=True,
+        )
+
+        evidence: list[Evidence] = []
+
+        # Map VideoDetector output to TrustLayer Evidence model
+        if video_result and video_result.get("score") is not None:
+            raw_score = float(video_result["score"])
+            uncertainty = float(video_result.get("uncertainty", 0.5))
+            confidence = max(0.0, min(1.0, 1.0 - uncertainty))
+            direction = str(video_result.get("direction", "inconclusive")).lower()
+
+            if direction == "suspicious":
+                status = "suspicious"
+            elif direction == "authentic":
+                status = "normal"
+            else:
+                status = "inconclusive"
+
+            t_range = None
+            res_tr = video_result.get("time_range")
+            if res_tr and isinstance(res_tr, dict) and "start" in res_tr and "end" in res_tr:
+                t_range = TimeRange(
+                    start=float(res_tr["start"]),
+                    end=float(res_tr["end"]),
+                )
+
+            video_evidence = Evidence(
+                modality="video",
+                signal="visual_synthetic",
+                score=max(0.0, min(1.0, raw_score)),
+                confidence=confidence,
+                status=status,
+                time_range=t_range,
+            )
+            evidence.append(video_evidence)
+
+        # Preserve existing audio and text mock evidence for Step 16
+        evidence.extend(
+            [
+                Evidence(
+                    modality="audio",
+                    signal="synthetic_voice",
+                    score=0.85,
+                    confidence=0.90,
+                    status="suspicious",
+                    time_range=TimeRange(start=1.0, end=4.0),
+                ),
+                Evidence(
+                    modality="text",
+                    signal="semantic_coherence",
+                    score=0.78,
+                    confidence=0.80,
+                    status="suspicious",
+                    time_range=None,
+                ),
+            ]
+        )
+
+        # Timeline generation from video intervals if available
+        if video_result and video_result.get("suspicious_intervals"):
+            for iv in video_result["suspicious_intervals"]:
+                timeline.append(
+                    TimelineItem(
+                        start=float(iv["start"]),
+                        end=float(iv["end"]),
+                        label="Detected visual manipulation",
+                        severity="high",
+                    )
+                )
+        elif video_result and video_result.get("time_range"):
+            tr = video_result["time_range"]
+            timeline.append(
+                TimelineItem(
+                    start=float(tr["start"]),
+                    end=float(tr["end"]),
+                    label="Detected visual anomaly",
+                    severity="medium",
+                )
+            )
+    else:
+        # Backward-compatible fallback for no-file requests
+        evidence = create_mock_evidence()
+        timeline = [
+            TimelineItem(
+                start=1.2,
+                end=3.8,
+                label="Detected facial artifact",
+                severity="high",
+            )
+        ]
 
     # Step 3: Cross-modal consistency analysis
     consistency_analyzer = ConsistencyAnalyzer()
@@ -167,21 +265,11 @@ async def run_investigation(
     conflict_detector = ConflictDetector()
     conflict_detected = conflict_detector.detect_conflict(evidence)
 
-    # Step 5: Trust assessment engine
+    # Step 5: Trust assessment engine (remains the ONLY verdict decision-maker)
     trust_engine = TrustEngine()
     assessment = trust_engine.assess(evidence, consistency_score=consistency_score)
     if conflict_detected:
         assessment.conflict = True
-
-    # Step 6: Deterministic timeline intervals
-    timeline = [
-        TimelineItem(
-            start=1.2,
-            end=3.8,
-            label="Detected facial artifact",
-            severity="high",
-        )
-    ]
 
     # Step 7: Generate explanation via Gemini (with deterministic fallback)
     explanation_service = GeminiExplanationService()
@@ -211,6 +299,7 @@ __all__ = [
     "TimelineItem",
     "TimeRange",
     "Verdict",
+    "VideoDetector",
     "create_mock_evidence",
     "router",
 ]
