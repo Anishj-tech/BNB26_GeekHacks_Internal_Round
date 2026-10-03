@@ -574,7 +574,11 @@ async def run_investigation(
 
     # Step 5: Trust assessment engine (remains the ONLY verdict decision-maker)
     trust_engine = TrustEngine()
-    assessment = trust_engine.assess(evidence, consistency_score=consistency_score)
+    assessment = trust_engine.assess(
+        evidence,
+        consistency_score=consistency_score,
+        conflict=conflict_detected,
+    )
     if conflict_detected:
         assessment.conflict = True
 

@@ -36,11 +36,20 @@ class ConsistencyAnalyzer:
             return self.default_consistency
 
         # 1. Handle explicit consistency modality items (e.g., AV-sync / alignment detectors)
-        consistency_items = [e for e in evidence if e.modality.lower() == "consistency"]
+        consistency_items = [
+            e for e in evidence
+            if e.modality.lower() in ("consistency", "audio_video")
+            or e.signal.lower() in ("lip_sync", "av_sync")
+        ]
         if consistency_items:
             scores: list[float] = []
             for item in consistency_items:
-                if "mismatch" in item.signal.lower() or "inconsistency" in item.signal.lower():
+                if (
+                    "mismatch" in item.signal.lower()
+                    or "inconsistency" in item.signal.lower()
+                    or item.signal.lower() in ("lip_sync", "av_sync")
+                    or item.modality.lower() == "audio_video"
+                ):
                     # High mismatch score means low consistency
                     scores.append(1.0 - item.score)
                 else:
@@ -49,7 +58,11 @@ class ConsistencyAnalyzer:
             return round(max(0.0, min(1.0, float(avg_score))), 4)
 
         # 2. Group forensic evidence by modality
-        forensic_evidence = [e for e in evidence if e.modality.lower() != "consistency"]
+        forensic_evidence = [
+            e for e in evidence
+            if e.modality.lower() not in ("consistency", "audio_video")
+            and e.signal.lower() not in ("lip_sync", "av_sync")
+        ]
         by_modality: dict[str, list[Evidence]] = {}
         for item in forensic_evidence:
             by_modality.setdefault(item.modality.lower(), []).append(item)

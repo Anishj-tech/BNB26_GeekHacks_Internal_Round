@@ -55,12 +55,14 @@ class TrustEngine:
         self,
         evidence: list[Evidence],
         consistency_score: Optional[float] = None,
+        conflict: Optional[bool] = None,
     ) -> Assessment:
         """Perform a deterministic assessment on the provided evidence items.
 
         Args:
             evidence: List of forensic evidence items across modalities.
             consistency_score: Optional cross-modal consistency score (0.0 to 1.0).
+            conflict: Optional explicit conflict flag from ConflictDetector.
 
         Returns:
             Assessment containing verdict, synthetic_score, consistency_score,
@@ -80,10 +82,15 @@ class TrustEngine:
             )
 
         # 2. Check for explicit conflict in evidence
-        conflict = self._detect_conflict(evidence)
+        if conflict is None:
+            conflict = self._detect_conflict(evidence)
 
         # 3. Separate forensic modality evidence from consistency items
-        forensic_evidence = [e for e in evidence if e.modality.lower() != "consistency"]
+        forensic_evidence = [
+            e for e in evidence
+            if e.modality.lower() not in ("consistency", "audio_video")
+            and e.signal.lower() not in ("lip_sync", "av_sync")
+        ]
         if not forensic_evidence:
             forensic_evidence = evidence
 
@@ -113,14 +120,28 @@ class TrustEngine:
         if consistency_score is not None:
             eff_consistency = max(0.0, min(1.0, float(consistency_score)))
         else:
-            consistency_items = [e for e in evidence if e.modality.lower() == "consistency"]
+            consistency_items = [
+                e for e in evidence
+                if e.modality.lower() in ("consistency", "audio_video")
+                or e.signal.lower() in ("lip_sync", "av_sync")
+            ]
             if consistency_items:
-                eff_consistency = max(0.0, min(1.0, float(consistency_items[0].score)))
+                ci = consistency_items[0]
+                if (
+                    "mismatch" in ci.signal.lower()
+                    or "inconsistency" in ci.signal.lower()
+                    or ci.signal.lower() in ("lip_sync", "av_sync")
+                    or ci.modality.lower() == "audio_video"
+                ):
+                    eff_consistency = max(0.0, min(1.0, 1.0 - float(ci.score)))
+                else:
+                    eff_consistency = max(0.0, min(1.0, float(ci.score)))
             else:
                 eff_consistency = self.default_consistency
 
         # 6. Calculate modality coverage (0.0 to 1.0)
-        present_modalities = set(by_modality.keys())
+        # evidence coverage is based on the core modalities video, audio, text
+        present_modalities = set(by_modality.keys()) & set(self.CORE_MODALITIES)
         coverage = min(1.0, len(present_modalities) / float(len(self.CORE_MODALITIES)))
         coverage = max(0.0, min(1.0, coverage))
 
