@@ -9,11 +9,15 @@ import { Footer } from './Footer';
 import { InvestigationModal } from './InvestigationModal';
 import { Divider } from '../design-system/components/Divider';
 
-export const LandingPage = () => {
+export const LandingPage = ({ onStartInvestigation }) => {
   const [modalOpen, setModalOpen] = useState(false);
 
   const handleStartInvestigation = () => {
-    setModalOpen(true);
+    if (onStartInvestigation) {
+      onStartInvestigation();
+    } else {
+      setModalOpen(true);
+    }
   };
 
   const handleExploreModel = () => {
