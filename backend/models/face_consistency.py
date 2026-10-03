@@ -8,12 +8,16 @@ of deepfake generation or authenticity. Face appearance can vary due to pose,
 lighting, occlusion, and legitimate camera motion.
 """
 
+import logging
 import os
+import threading
 import urllib.request
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,10 +53,12 @@ class FaceConsistencyDetector:
     Uses OpenCV's neural YuNet face detector with local caching.
     """
 
-    YUNET_URL = (
-        "https://github.com/opencv/opencv_zoo/raw/main/models/"
-        "face_detection_yunet/face_detection_yunet_2023mar.onnx"
-    )
+    YUNET_URLS = [
+        "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+        "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+    ]
+    # Backward compatibility attribute
+    YUNET_URL = YUNET_URLS[0]
 
     def __init__(self, cache_dir: Optional[str] = None):
         self.cache_dir = cache_dir or os.path.expanduser("~/.cache/trustlayer")
@@ -60,56 +66,96 @@ class FaceConsistencyDetector:
         self.model_path = os.path.join(self.cache_dir, "face_detection_yunet_2023mar.onnx")
         self._detector = None
         self._detector_input_size = None
-        self._init_detector()
+        self._init_lock = threading.Lock()
+        self._is_initialized = False
 
     def _ensure_weights(self) -> bool:
-        """Ensures YuNet model weights are downloaded and available."""
-        if os.path.exists(self.model_path) and os.path.getsize(self.model_path) > 10000:
+        """Ensures YuNet model weights are downloaded, verified, and available."""
+        # Expected YuNet 2023mar ONNX size is ~232 KB (> 150 KB)
+        if os.path.exists(self.model_path) and os.path.getsize(self.model_path) > 150000:
             return True
-        try:
-            req = urllib.request.Request(self.YUNET_URL, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = resp.read()
-            with open(self.model_path, "wb") as f:
-                f.write(data)
-            return True
-        except Exception:
-            return False
 
-    def _init_detector(self) -> None:
-        """Initializes FaceDetectorYN if weights are present."""
-        if not hasattr(cv2, "FaceDetectorYN_create"):
-            return
-
-        if self._ensure_weights():
+        temp_path = self.model_path + ".tmp"
+        for url in self.YUNET_URLS:
             try:
-                self._detector = cv2.FaceDetectorYN_create(
-                    self.model_path,
-                    "",
-                    (320, 240),
-                    score_threshold=0.6,
-                    nms_threshold=0.3,
-                    top_k=5000,
-                )
-                self._detector_input_size = (320, 240)
-            except Exception:
+                req = urllib.request.Request(url, headers={"User-Agent": "TrustLayer/1.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = resp.read()
+
+                if len(data) > 150000:
+                    with open(temp_path, "wb") as f:
+                        f.write(data)
+                    os.replace(temp_path, self.model_path)
+                    logger.info("Successfully downloaded YuNet weights to %s", self.model_path)
+                    return True
+            except Exception as e:
+                logger.warning("Failed to download YuNet weights from %s: %s", url, str(e))
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
+        return False
+
+    def _get_detector(self):
+        """Lazily initializes and returns FaceDetectorYN instance in a thread-safe manner."""
+        if self._is_initialized:
+            return self._detector
+
+        with self._init_lock:
+            if self._is_initialized:
+                return self._detector
+
+            if not hasattr(cv2, "FaceDetectorYN_create"):
+                logger.warning("cv2.FaceDetectorYN_create not available in this OpenCV environment")
+                self._is_initialized = True
+                return None
+
+            if self._ensure_weights():
+                try:
+                    self._detector = cv2.FaceDetectorYN_create(
+                        self.model_path,
+                        "",
+                        (320, 240),
+                        score_threshold=0.6,
+                        nms_threshold=0.3,
+                        top_k=5000,
+                    )
+                    self._detector_input_size = (320, 240)
+                except Exception as e:
+                    logger.warning("Failed to load YuNet ONNX model from %s: %s", self.model_path, str(e))
+                    if os.path.exists(self.model_path):
+                        try:
+                            os.remove(self.model_path)
+                        except OSError:
+                            pass
+                    self._detector = None
+            else:
+                logger.warning("YuNet weights unavailable; face detection will operate in fallback mode")
                 self._detector = None
+
+            self._is_initialized = True
+            return self._detector
 
     def detect_face(self, frame_bgr: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
         """
         Detects primary face bounding box (x, y, w, h) in a single BGR frame.
         Returns the largest detected face box, or None if no face is found.
         """
-        if frame_bgr is None or frame_bgr.size == 0 or self._detector is None:
+        if frame_bgr is None or frame_bgr.size == 0:
+            return None
+
+        detector = self._get_detector()
+        if detector is None:
             return None
 
         h, w = frame_bgr.shape[:2]
         if (w, h) != self._detector_input_size:
-            self._detector.setInputSize((w, h))
+            detector.setInputSize((w, h))
             self._detector_input_size = (w, h)
 
         try:
-            _, faces = self._detector.detect(frame_bgr)
+            _, faces = detector.detect(frame_bgr)
             if faces is None or len(faces) == 0:
                 return None
 
