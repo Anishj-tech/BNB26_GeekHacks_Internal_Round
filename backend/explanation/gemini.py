@@ -184,21 +184,27 @@ class GeminiExplanationService:
 
         # 2. Call Gemini using google-genai SDK
         if genai is not None:
-            try:
-                client = genai.Client(api_key=self.api_key)
-                response = client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=genai_types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        temperature=0.2,
-                        max_output_tokens=350,
-                    ),
-                )
-                if response and response.text and response.text.strip():
-                    return response.text.strip()
-            except Exception as e:
-                logger.warning("Gemini SDK call failed, using deterministic fallback: %s", e)
+            candidate_models = [self.model, "gemini-flash-lite-latest", "gemini-flash-latest"]
+            seen_models = set()
+            for mod_name in candidate_models:
+                if not mod_name or mod_name in seen_models:
+                    continue
+                seen_models.add(mod_name)
+                try:
+                    client = genai.Client(api_key=self.api_key)
+                    response = client.models.generate_content(
+                        model=mod_name,
+                        contents=prompt,
+                        config=genai_types.GenerateContentConfig(
+                            system_instruction=SYSTEM_INSTRUCTION,
+                            temperature=0.2,
+                            max_output_tokens=350,
+                        ),
+                    )
+                    if response and response.text and response.text.strip():
+                        return response.text.strip()
+                except Exception as e:
+                    logger.warning("Gemini SDK call to %s failed: %s", mod_name, e)
 
         # 3. Deterministic fallback as the final failure path
         return self.build_fallback_explanation(assessment, evidence, timeline)

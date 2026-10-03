@@ -702,44 +702,192 @@ let investigationsStore = [
 ];
 
 /**
- * Service API Methods
+/**
+ * Normalize investigation payload from backend or disk into canonical frontend model
  */
+function normalizeInvestigation(data) {
+  if (!data) return null;
+  const invId = data.id || data.investigation_id || `INV-${Date.now()}`;
+  const rawAss = data.assessment || {};
+  const verdict = rawAss.verdict || 'UNCERTAIN';
+  const syntheticScore = rawAss.synthetic_score !== undefined ? Number(rawAss.synthetic_score) : (rawAss.syntheticScore ?? 0.5);
+  const consistencyScore = rawAss.consistency_score !== undefined ? Number(rawAss.consistency_score) : (rawAss.consistencyScore ?? 0.5);
+  
+  let evidenceCoverage = 50;
+  if (rawAss.evidence_coverage !== undefined) {
+    const rawCov = Number(rawAss.evidence_coverage);
+    evidenceCoverage = rawCov <= 1.0 ? Math.round(rawCov * 100) : Math.round(rawCov);
+  } else if (rawAss.evidenceCoverage !== undefined) {
+    evidenceCoverage = Math.round(Number(rawAss.evidenceCoverage));
+  }
 
+  const conflictDetected = Boolean(rawAss.conflict !== undefined ? rawAss.conflict : rawAss.conflictDetected);
+
+  const assessment = {
+    verdict: verdict,
+    summary: data.explanation || rawAss.summary || 'Deterministic evidence fusion completed.',
+    confidenceExplanation: rawAss.confidenceExplanation || (
+      data.explanation
+        ? 'Explanation generated from structured multi-sensor forensic evidence.'
+        : 'Assessment derived strictly from multi-sensor evidence fusion.'
+    ),
+    engineeringTrustIndex: Math.round(Math.max(0, Math.min(100, (1.0 - syntheticScore) * (consistencyScore) * 100))),
+    syntheticScore: syntheticScore,
+    synthetic_score: syntheticScore,
+    syntheticLabel: syntheticScore >= 0.65 ? 'HIGH SYNTHETIC EVIDENCE' : syntheticScore <= 0.35 ? 'LOW SYNTHETIC EVIDENCE' : 'MODERATE SYNTHETIC',
+    consistencyScore: consistencyScore,
+    consistency_score: consistencyScore,
+    consistencyLabel: consistencyScore >= 0.70 ? 'HIGH CONSISTENCY' : consistencyScore <= 0.35 ? 'CRITICAL CONFLICT' : 'MODERATE CONSISTENCY',
+    evidenceCoverage: evidenceCoverage,
+    evidence_coverage: evidenceCoverage,
+    conflictDetected: conflictDetected,
+    conflict: conflictDetected,
+    insufficientEvidence: verdict.includes('INSUFFICIENT') || verdict === 'UNCERTAIN',
+  };
+
+  const twoAxis = data.twoAxis || {
+    synthetic: syntheticScore,
+    consistency: consistencyScore,
+    quadrant: data.twoAxis?.quadrant || (
+      verdict === 'AUTHENTIC' || verdict === 'TRUSTED' ? 'AUTHENTIC BASELINE'
+      : verdict === 'COORDINATED SYNTHETIC' ? 'COORDINATED SYNTHETIC'
+      : verdict === 'MANIPULATED' ? 'AI MANIPULATION'
+      : 'UNRESOLVED UNCERTAINTY'
+    ),
+  };
+
+  return {
+    ...data,
+    id: invId,
+    investigation_id: invId,
+    name: data.name || `Evidence Dissection // ${data.filename || 'uploaded_evidence.mp4'}`,
+    filename: data.filename || 'uploaded_evidence.mp4',
+    fileSize: data.fileSize || 'Unknown size',
+    fileType: data.fileType || 'video/mp4',
+    duration: data.duration || '00:00',
+    resolution: data.resolution || '1280x720',
+    fps: data.fps || 30,
+    sha256: data.sha256 || '0'.repeat(64),
+    createdAt: data.createdAt || new Date().toISOString(),
+    status: data.status || 'COMPLETED',
+    isDemo: Boolean(data.isDemo),
+    assessment: assessment,
+    twoAxis: twoAxis,
+    coverage: data.coverage || [],
+    conflict: data.conflict || {
+      detected: conflictDetected,
+      title: conflictDetected ? 'Cross-Modal Conflict Detected' : 'No Conflict Detected',
+      severity: conflictDetected ? 'HIGH' : 'NONE',
+      description: conflictDetected ? 'Contradictory evidence signals detected between modalities.' : 'No contradictory evidence detected.',
+      details: [],
+    },
+    videoAnalysis: data.videoAnalysis || {
+      framesAnalyzed: data.evidence?.length || 0,
+      visualSyntheticScore: syntheticScore,
+      visualUncertainty: 'LOW',
+      suspiciousIntervals: [],
+      representativeFrames: [],
+    },
+    evidence: data.evidence || [],
+    evidenceList: data.evidenceList || [],
+    timeline: data.timeline || [],
+    explanation: data.explanation || assessment.summary,
+    graph: data.graph || null,
+  };
+}
+
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) || 'http://localhost:8000';
+
+/**
+ * Service API Methods connecting frontend to real TrustLayer backend
+ */
 export const investigationService = {
   /**
-   * List all previous investigations
+   * List all investigations: combines persisted real investigations with pre-seeded demo cases.
    */
   async listInvestigations() {
-    // Simulate brief network latency for realistic responsiveness
-    await new Promise((res) => setTimeout(res, 80));
-    return [...investigationsStore];
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/investigations`, {
+        headers: { 'Accept': 'application/json' },
+      });
+      if (res.ok) {
+        const backendItems = await res.json();
+        const normalizedBackend = backendItems.map(normalizeInvestigation);
+        
+        // Merge with demo items (deduplicated by ID)
+        const backendIds = new Set(normalizedBackend.map(b => b.id.toUpperCase()));
+        const remainingDemos = investigationsStore
+          .filter(d => d.isDemo && !backendIds.has(d.id.toUpperCase()))
+          .map(normalizeInvestigation);
+        
+        return [...normalizedBackend, ...remainingDemos];
+      }
+    } catch {
+      // Backend offline or unreachable fallback to local store
+    }
+    return investigationsStore.map(normalizeInvestigation);
   },
 
   /**
-   * Get an investigation by ID
+   * Get an investigation by ID (checks memory/demos, then queries real backend API)
    */
   async getInvestigation(id) {
-    await new Promise((res) => setTimeout(res, 60));
-    const inv = investigationsStore.find((item) => item.id.toUpperCase() === id.toUpperCase());
-    if (!inv) {
-      // Fallback to first if not found
-      return investigationsStore[0];
+    if (!id) return investigationsStore[0];
+
+    // Check in-memory store first
+    const localMatch = investigationsStore.find(
+      item => item.id.toUpperCase() === id.toUpperCase()
+    );
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/investigation/${encodeURIComponent(id)}`, {
+        headers: { 'Accept': 'application/json' },
+      });
+      if (res.ok) {
+        const backendData = await res.json();
+        const normalized = normalizeInvestigation(backendData);
+        // Cache or update in local array
+        const idx = investigationsStore.findIndex(i => i.id.toUpperCase() === id.toUpperCase());
+        if (idx >= 0) {
+          investigationsStore[idx] = normalized;
+        } else {
+          investigationsStore.unshift(normalized);
+        }
+        return normalized;
+      }
+    } catch {
+      // Return cached/demo if API is offline
     }
-    return inv;
+
+    if (localMatch) {
+      return normalizeInvestigation(localMatch);
+    }
+
+    // Default to first demo case if id not found anywhere
+    return normalizeInvestigation(investigationsStore[0]);
   },
 
   /**
-   * Create a new investigation from uploaded files
+   * Create a new investigation via real backend API:
+   * Dispatches multipart file upload to POST /api/v1/investigation/upload,
+   * runs real ML inference (ViT + AASIST + Whisper + SyncNet + TrustEngine + Gemini),
+   * persists the investigation, and returns the canonical result.
    */
   async createInvestigation({ videoFile, audioFile, transcriptText, onProgress }) {
-    const newId = `INV-2026-${String(investigationsStore.length + 1).padStart(3, '0')}`;
-    const filename = videoFile?.name || 'uploaded_evidence.mp4';
-    const fileSize = videoFile ? `${(videoFile.size / (1024 * 1024)).toFixed(1)} MB` : '14.2 MB';
+    if (!videoFile) {
+      throw new Error('A valid video file is required to initiate an investigation.');
+    }
 
-    // Simulated cryptographic hash for chain of custody
-    const randomHash = Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    const formData = new FormData();
+    formData.append('video_file', videoFile);
+    if (audioFile) {
+      formData.append('audio_file', audioFile);
+    }
+    if (transcriptText && transcriptText.trim()) {
+      formData.append('transcript_text', transcriptText.trim());
+    }
 
-    // Pipeline stages from requirements
+    // Progress stages mapped to real pipeline execution
     const stages = [
       { stage: 'VALIDATING', note: 'Validating media container and computing cryptographic hash' },
       { stage: 'EXTRACTING', note: 'Extracting keyframes and acoustic audio spectrogram' },
@@ -749,161 +897,70 @@ export const investigationService = {
       { stage: 'ASSESSING TRUST', note: 'Synthesizing evidence-backed trust assessment' },
     ];
 
+    let progressTimer = null;
     if (onProgress) {
-      for (let i = 0; i < stages.length; i++) {
+      let stageIndex = 0;
+      onProgress({
+        stageIndex: 0,
+        totalStages: stages.length,
+        stageName: stages[0].stage,
+        note: stages[0].note,
+        percent: 15,
+      });
+
+      progressTimer = setInterval(() => {
+        stageIndex = Math.min(stageIndex + 1, stages.length - 1);
         onProgress({
-          stageIndex: i,
+          stageIndex,
           totalStages: stages.length,
-          stageName: stages[i].stage,
-          note: stages[i].note,
-          percent: Math.round(((i + 1) / stages.length) * 100),
+          stageName: stages[stageIndex].stage,
+          note: stages[stageIndex].note,
+          percent: Math.round(((stageIndex + 1) / stages.length) * 95),
         });
-        await new Promise((res) => setTimeout(res, 380));
-      }
+      }, 1200);
     }
 
-    // Produce an authentic or manipulated investigation depending on upload or default
-    const hasExternalAudio = Boolean(audioFile);
-    const hasTranscript = Boolean(transcriptText?.trim());
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/investigation/upload`, {
+        method: 'POST',
+        body: formData,
+      });
 
-    const newInvestigation = {
-      id: newId,
-      name: `Evidence Dissection // ${filename}`,
-      filename,
-      fileSize,
-      fileType: videoFile?.type || 'video/mp4',
-      duration: '00:20',
-      resolution: '1920x1080',
-      fps: 30,
-      sha256: randomHash,
-      createdAt: new Date().toISOString(),
-      status: 'COMPLETED',
-      isDemo: false,
+      if (progressTimer) clearInterval(progressTimer);
 
-      assessment: {
-        verdict: hasExternalAudio ? 'PROBABLY MANIPULATED' : 'PROBABLY TRUSTED',
-        summary: hasExternalAudio
-          ? 'External audio stream exhibits slight acoustic room discrepancy when aligned with video background geometry.'
-          : 'Multi-modal evidence demonstrates consistent temporal coherence across video keyframes and embedded audio.',
-        confidenceExplanation: 'Full modality coverage allows balanced evidence fusion with transparent uncertainty bounds.',
-        engineeringTrustIndex: hasExternalAudio ? 36 : 86,
-        syntheticScore: hasExternalAudio ? 0.68 : 0.16,
-        syntheticLabel: hasExternalAudio ? 'MODERATE SYNTHETIC' : 'LOW SYNTHETIC EVIDENCE',
-        consistencyScore: hasExternalAudio ? 0.42 : 0.91,
-        consistencyLabel: hasExternalAudio ? 'MODERATE CONFLICT' : 'HIGH CONSISTENCY',
-        evidenceCoverage: hasTranscript ? 96 : 84,
-        conflictDetected: hasExternalAudio,
-        insufficientEvidence: false,
-      },
-
-      twoAxis: {
-        synthetic: hasExternalAudio ? 0.68 : 0.16,
-        consistency: hasExternalAudio ? 0.42 : 0.91,
-        quadrant: hasExternalAudio ? 'AI MANIPULATION' : 'AUTHENTIC BASELINE',
-      },
-
-      coverage: [
-        { modality: 'VIDEO', label: 'Video Frames', analyzed: true, isSupporting: false, coverage: 100, detail: 'Keyframe raster and optical flow verified' },
-        { modality: 'AUDIO', label: 'Audio Spectrum', analyzed: true, isSupporting: false, coverage: 100, detail: hasExternalAudio ? 'External audio examined' : 'Embedded audio track extracted' },
-        { modality: 'TRANSCRIPT', label: 'Speech Transcript', analyzed: hasTranscript, isSupporting: false, coverage: hasTranscript ? 100 : 0, detail: hasTranscript ? 'User provided transcript verified' : 'Not supplied' },
-        { modality: 'CROSS_MODAL', label: 'Lip-Sync Correlation', analyzed: true, isSupporting: false, coverage: 90, detail: 'SyncNet 3D phoneme velocity' },
-        { modality: 'FACE', label: 'Face Consistency', analyzed: true, isSupporting: true, coverage: 80, detail: 'Biological landmarks tracking (Supporting Evidence)' },
-      ],
-
-      conflict: {
-        detected: hasExternalAudio,
-        title: hasExternalAudio ? 'Secondary Audio Acoustic Variance' : 'No Conflict Detected',
-        severity: hasExternalAudio ? 'MODERATE' : 'NONE',
-        description: hasExternalAudio
-          ? 'External audio track reverberation does not perfectly match visible video room boundaries.'
-          : 'All analyzed signals mutually corroborate within normal physical tolerances.',
-        details: hasExternalAudio ? [
-          {
-            pair: 'External Audio Track ⟷ Video Environment',
-            status: 'REVERB MISMATCH',
-            explanation: 'Audio was recorded in high absorption studio; video is an echoic hall.',
+      if (!response.ok) {
+        let errorMsg = `Server error ${response.status}`;
+        try {
+          const errJson = await response.json();
+          if (errJson && errJson.detail) {
+            errorMsg = errJson.detail;
           }
-        ] : [],
-        impactOnTrust: hasExternalAudio ? 'Introduces uncertainty regarding audio origin.' : 'Reinforces high trust assessment.',
-      },
+        } catch {
+          // Non-JSON error body
+        }
+        throw new Error(`Investigation failed: ${errorMsg}`);
+      }
 
-      videoAnalysis: {
-        framesAnalyzed: 600,
-        visualSyntheticScore: hasExternalAudio ? 0.35 : 0.12,
-        visualUncertainty: 'LOW',
-        suspiciousIntervals: hasExternalAudio ? [
-          { start: '00:00', end: '00:06.0', status: 'NORMAL', label: 'Normal' },
-          { start: '00:06.0', end: '00:14.0', status: 'SUSPICIOUS', label: 'Acoustic Desync' },
-          { start: '00:14.0', end: '00:20.0', status: 'NORMAL', label: 'Normal' },
-        ] : [
-          { start: '00:00', end: '00:20.0', status: 'NORMAL', label: 'Continuous Coherence' },
-        ],
-        representativeFrames: [
-          {
-            frameNumber: 150,
-            timestamp: '00:05.00',
-            label: 'Baseline Keyframe',
-            finding: 'Facial landmarks locked. Corneal light highlights agree with primary key lighting.',
-            confidence: 'High',
-          },
-        ],
-      },
+      if (onProgress) {
+        onProgress({
+          stageIndex: stages.length - 1,
+          totalStages: stages.length,
+          stageName: 'COMPLETED',
+          note: 'Forensic evaluation and deterministic fusion complete.',
+          percent: 100,
+        });
+      }
 
-      consistencyNetwork: [
-        { source: 'Video Face', target: 'Audio Track', relationship: 'SyncNet Lip-Voice Timing', score: hasExternalAudio ? 0.44 : 0.92, status: hasExternalAudio ? 'CONFLICT' : 'AGREEMENT', note: hasExternalAudio ? 'Slight desynchronization offset' : 'Sub-10ms synchrony verified' },
-        { source: 'Transcript', target: 'Audio Track', relationship: 'Whisper Alignment', score: 0.94, status: 'AGREEMENT', note: 'Speech conforms to transcript' },
-      ],
+      const realResult = await response.json();
+      const normalized = normalizeInvestigation(realResult);
 
-      evidenceList: [
-        {
-          id: 'EV-NEW-01',
-          modality: 'VIDEO',
-          isSupporting: false,
-          signalType: 'Visual Artifact Scan',
-          score: hasExternalAudio ? 0.35 : 0.12,
-          direction: hasExternalAudio ? 'INSUFFICIENT' : 'CONFIRMS_AUTHENTIC',
-          uncertainty: 'Low',
-          timeRange: '00:00 - 00:20.0',
-          observation: 'Pixel flow continuity evaluated across all 600 frames.',
-          reasoning: 'No diffusion texture signatures detected in facial region.',
-        },
-        {
-          id: 'EV-NEW-02',
-          modality: 'CROSS_MODAL',
-          isSupporting: false,
-          signalType: 'SyncNet Cross-Modal Check',
-          score: hasExternalAudio ? 0.44 : 0.92,
-          direction: hasExternalAudio ? 'CROSS_MODAL_CONFLICT' : 'CONFIRMS_AUTHENTIC',
-          uncertainty: 'Low',
-          timeRange: '00:00 - 00:20.0',
-          observation: hasExternalAudio ? 'Audio-visual timing offset exceeds 80ms.' : 'Lip motions match audio phoneme energy.',
-          reasoning: 'Corroboration evaluated via 3D viseme velocity.',
-        },
-        {
-          id: 'EV-NEW-03',
-          modality: 'FACE',
-          isSupporting: true,
-          signalType: 'Facial Landmark Consistency (Supporting)',
-          score: 0.85,
-          direction: 'CONFIRMS_AUTHENTIC',
-          uncertainty: 'Low',
-          timeRange: '00:00 - 00:20.0',
-          observation: 'Natural micro-expressions and ocular movement observed.',
-          reasoning: 'Supporting evidence reinforces physiological authenticity.',
-        },
-      ],
-
-      timeline: [
-        { step: 'Evidence Intake', timestamp: new Date().toLocaleTimeString(), status: 'COMPLETED', detail: `Received ${filename} (${fileSize}). Cryptographic hash generated.` },
-        { step: 'Container Validation', timestamp: new Date().toLocaleTimeString(), status: 'COMPLETED', detail: 'Audio/video streams verified.' },
-        { step: 'Frame Sampling', timestamp: new Date().toLocaleTimeString(), status: 'COMPLETED', detail: 'Extracted 600 frames at 30fps.' },
-        { step: 'Visual Analysis', timestamp: new Date().toLocaleTimeString(), status: 'COMPLETED', detail: 'No generative synthesis found.' },
-        { step: 'Cross-Modal Analysis', timestamp: new Date().toLocaleTimeString(), status: 'COMPLETED', detail: hasExternalAudio ? 'Flagged audio-visual timing variance.' : 'Verified high consistency.' },
-        { step: 'Trust Assessment', timestamp: new Date().toLocaleTimeString(), status: 'COMPLETED', detail: `Assessment: ${hasExternalAudio ? 'PROBABLY MANIPULATED' : 'PROBABLY TRUSTED'}.` },
-      ],
-    };
-
-    investigationsStore.unshift(newInvestigation);
-    return newInvestigation;
+      // Add to front of store
+      investigationsStore.unshift(normalized);
+      return normalized;
+    } catch (err) {
+      if (progressTimer) clearInterval(progressTimer);
+      throw err;
+    }
   },
 };
+

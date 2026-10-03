@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.dist/
+*.local
+
+# Environment
+.env
+
+# Storage runtime uploads and temporary investigations
+data/uploads/*
+data/processed/*
+data/investigations/*
+!data/demo/
+!data/uploads/.gitkeep
+!data/processed/.gitkeep
+!data/investigations/.gitkeep
