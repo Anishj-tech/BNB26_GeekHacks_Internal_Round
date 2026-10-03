@@ -1,15 +1,36 @@
-"""
-TrustLayer - Frame Sampling Module
-Responsible for memory-efficient frame extraction from video files,
-preserving accurate frame indices and timestamps for temporal forensic localization.
+"""Frame extraction contract and data models for video preprocessing.
+
+Provides structures and interface hooks for video frame extraction:
+- FrameInfo & extract_frames: Pydantic interface from Step 14
+- FrameData, FrameExtractor, sample_frames, iter_frames: OpenCV frame sampling from ml-video
 """
 
 from dataclasses import dataclass
 from typing import Generator, List, Optional
 import cv2
 import numpy as np
+from pydantic import BaseModel, Field
 
-from backend.preprocessing.video import get_video_metadata, VideoMetadata
+# Note: get_video_metadata is imported lazily inside iter_frames to avoid circular imports
+
+
+class FrameInfo(BaseModel):
+    """Information for an extracted video frame."""
+
+    timestamp: float = Field(ge=0.0, description="Timestamp of the frame in seconds from video start")
+    frame_index: Optional[int] = Field(default=None, ge=0, description="0-indexed frame sequence number")
+    path: Optional[str] = Field(default=None, description="Filesystem path or URI to the extracted frame image")
+    width: Optional[int] = Field(default=None, gt=0, description="Width of the frame in pixels")
+    height: Optional[int] = Field(default=None, gt=0, description="Height of the frame in pixels")
+
+
+def extract_frames(
+    video_path: str,
+    fps: Optional[float] = None,
+    max_frames: Optional[int] = None,
+) -> list[FrameInfo]:
+    """Extract frames metadata."""
+    return []
 
 
 @dataclass
@@ -29,16 +50,9 @@ class FrameData:
 
 
 class FrameExtractor:
-    """
-    Extracts frames from video files at controlled intervals without loading
-    the full video into memory.
-    """
+    """Extracts frames from video files at controlled intervals without loading the full video into memory."""
 
     def __init__(self, default_sample_fps: float = 1.0, max_frames: int = 30):
-        """
-        :param default_sample_fps: Desired sampling rate (e.g., 1.0 = 1 frame per second).
-        :param max_frames: Maximum number of frames to sample to bound memory and CPU usage.
-        """
         self.default_sample_fps = default_sample_fps
         self.max_frames = max_frames
 
@@ -48,11 +62,13 @@ class FrameExtractor:
         sample_fps: Optional[float] = None,
         max_frames: Optional[int] = None,
     ) -> Generator[FrameData, None, None]:
-        """
-        Generator yielding FrameData sequentially to minimize peak RAM consumption.
-        """
         target_fps = sample_fps if sample_fps is not None else self.default_sample_fps
         limit_frames = max_frames if max_frames is not None else self.max_frames
+
+        try:
+            from backend.preprocessing.video import get_video_metadata, VideoMetadata
+        except ImportError:
+            from preprocessing.video import get_video_metadata, VideoMetadata
 
         metadata: VideoMetadata = get_video_metadata(video_path)
         if not metadata.is_valid or metadata.frame_count <= 0 or metadata.fps <= 0:
@@ -72,7 +88,6 @@ class FrameExtractor:
             else:
                 step = max(1, int(round(native_fps / target_fps)))
 
-            # If total expected sampled frames exceed limit, adjust step
             expected_sampled = total_frames // step
             if expected_sampled > limit_frames:
                 step = max(1, total_frames // limit_frames)
@@ -105,9 +120,6 @@ class FrameExtractor:
         sample_fps: Optional[float] = None,
         max_frames: Optional[int] = None,
     ) -> List[FrameData]:
-        """
-        Collects sampled frames into a list.
-        """
         return list(
             self.iter_frames(
                 video_path=video_path,
@@ -140,3 +152,13 @@ def iter_frames(
     return _extractor.iter_frames(
         video_path=video_path, sample_fps=sample_fps, max_frames=max_frames
     )
+
+
+__all__ = [
+    "FrameData",
+    "FrameExtractor",
+    "FrameInfo",
+    "extract_frames",
+    "iter_frames",
+    "sample_frames",
+]

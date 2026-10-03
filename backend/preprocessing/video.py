@@ -1,36 +1,67 @@
-"""
-TrustLayer - Video Preprocessing Module
-Responsible for validating video input, verifying container integrity,
-and extracting video stream metadata (FPS, duration, resolution, frame count)
-using OpenCV and FFmpeg capabilities.
+"""Video preprocessing contract and service for TrustLayer.
+
+Combines:
+- Step 14/15 preprocessing contracts (VideoMetadata, PreprocessingResult, PreprocessingService)
+- OpenCV-based video validation and metadata extraction (VideoPreprocessor, validate_video, get_video_metadata)
 """
 
 import os
-from dataclasses import dataclass, asdict
 from typing import Optional, Tuple
 import cv2
+from pydantic import BaseModel, Field
+
+try:
+    from backend.preprocessing.frames import FrameInfo, extract_frames
+    from backend.preprocessing.audio import (
+        AudioInfo,
+        TranscriptInfo,
+        TranscriptSegment,
+        extract_audio,
+        transcribe_audio,
+    )
+except ImportError:
+    from preprocessing.frames import FrameInfo, extract_frames
+    from preprocessing.audio import (
+        AudioInfo,
+        TranscriptInfo,
+        TranscriptSegment,
+        extract_audio,
+        transcribe_audio,
+    )
 
 
-@dataclass
-class VideoMetadata:
-    filepath: str
-    duration_seconds: float
-    fps: float
-    frame_count: int
-    width: int
-    height: int
-    is_valid: bool
-    error_message: Optional[str] = None
+class VideoMetadata(BaseModel):
+    """Core video container and stream metadata."""
+
+    duration: float = Field(default=0.0, ge=0.0, description="Video duration in seconds")
+    fps: float = Field(default=0.0, ge=0.0, description="Frames per second")
+    width: int = Field(default=0, ge=0, description="Video width in pixels")
+    height: int = Field(default=0, ge=0, description="Video height in pixels")
+    total_frames: Optional[int] = Field(default=None, ge=0, description="Total frame count")
+    codec: Optional[str] = Field(default=None, description="Video stream codec (e.g. h264, vp9)")
+    filepath: Optional[str] = Field(default=None, description="Video file path")
+    duration_seconds: float = Field(default=0.0, description="Video duration in seconds")
+    frame_count: int = Field(default=0, description="Total frame count")
+    is_valid: bool = Field(default=True, description="Whether the video stream is valid")
+    error_message: Optional[str] = Field(default=None, description="Error message if invalid")
+
+    def __init__(self, **data):
+        if "duration" in data and "duration_seconds" not in data:
+            data["duration_seconds"] = data["duration"]
+        elif "duration_seconds" in data and "duration" not in data:
+            data["duration"] = data["duration_seconds"]
+        if "total_frames" in data and "frame_count" not in data:
+            data["frame_count"] = data["total_frames"] or 0
+        elif "frame_count" in data and "total_frames" not in data:
+            data["total_frames"] = data["frame_count"]
+        super().__init__(**data)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return self.model_dump()
 
 
 class VideoPreprocessor:
-    """
-    Validates input video files and extracts essential stream metadata
-    prior to downstream frame sampling and forensic analysis.
-    """
+    """Validates input video files and extracts essential stream metadata."""
 
     SUPPORTED_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
@@ -38,32 +69,22 @@ class VideoPreprocessor:
         self.max_duration_seconds = max_duration_seconds
 
     def validate_file(self, video_path: str) -> Tuple[bool, Optional[str]]:
-        """
-        Validates that the file exists, is non-empty, and has a supported extension.
-        """
         if not video_path:
             return False, "Video path is empty or None"
-
         if not os.path.exists(video_path):
             return False, f"Video file not found: {video_path}"
-
         if not os.path.isfile(video_path):
             return False, f"Path is not a regular file: {video_path}"
-
         if os.path.getsize(video_path) == 0:
             return False, "Video file is empty (0 bytes)"
 
         ext = os.path.splitext(video_path)[1].lower()
         if ext not in self.SUPPORTED_EXTENSIONS:
-            return False, f"Unsupported video extension: '{ext}'. Supported: {', '.join(self.SUPPORTED_EXTENSIONS)}"
+            return False, f"Unsupported video extension: '{ext}'. Supported: {', '.join(sorted(self.SUPPORTED_EXTENSIONS))}"
 
         return True, None
 
     def extract_metadata(self, video_path: str) -> VideoMetadata:
-        """
-        Opens the video container using OpenCV, validates readable stream,
-        and extracts video stream properties.
-        """
         is_valid, error = self.validate_file(video_path)
         if not is_valid:
             return VideoMetadata(
@@ -96,7 +117,6 @@ class VideoPreprocessor:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
 
-            # Check if at least one frame can be read
             ret, test_frame = cap.read()
             if not ret or test_frame is None:
                 return VideoMetadata(
@@ -110,11 +130,9 @@ class VideoPreprocessor:
                     error_message="Video contains no decodable frames",
                 )
 
-            # If frame count or fps reported as 0, calculate duration safely
             if fps > 0 and frame_count > 0:
                 duration_seconds = frame_count / fps
             elif fps > 0:
-                # Count remaining frames manually if metadata is incomplete
                 remaining_frames = 1
                 while True:
                     ret_next, _ = cap.read()
@@ -152,7 +170,6 @@ class VideoPreprocessor:
             cap.release()
 
 
-# Convenience functions
 _preprocessor = VideoPreprocessor()
 
 
@@ -165,3 +182,66 @@ def validate_video(video_path: str) -> Tuple[bool, Optional[str]]:
 def get_video_metadata(video_path: str) -> VideoMetadata:
     """Convenience helper to extract video metadata."""
     return _preprocessor.extract_metadata(video_path)
+
+
+class PreprocessingResult(BaseModel):
+    """Unified result contract for media preprocessing."""
+
+    video_path: str = Field(description="Original video path, URI, or storage reference")
+    metadata: Optional[VideoMetadata] = Field(default=None, description="Extracted video stream metadata")
+    frames: list[FrameInfo] = Field(default_factory=list, description="Extracted frame references with timestamps")
+    audio: Optional[AudioInfo] = Field(default=None, description="Extracted audio stream metadata and path")
+    transcript: Optional[TranscriptInfo] = Field(default=None, description="Transcribed speech text and segments")
+    status: str = Field(default="placeholder", description="Status of the preprocessing stage")
+    error: Optional[str] = Field(default=None, description="Error message if preprocessing failed")
+
+
+class PreprocessingService:
+    """Service interface for multimodal media preprocessing."""
+
+    def process(
+        self,
+        video_path: str,
+        metadata: Optional[VideoMetadata] = None,
+    ) -> PreprocessingResult:
+        return PreprocessingResult(
+            video_path=video_path,
+            metadata=metadata,
+            frames=[],
+            audio=None,
+            transcript=None,
+            status="placeholder",
+            error=None,
+        )
+
+    def preprocess(
+        self,
+        video_path: str,
+        metadata: Optional[VideoMetadata] = None,
+    ) -> PreprocessingResult:
+        return self.process(video_path, metadata=metadata)
+
+
+def preprocess_video(
+    video_path: str,
+    metadata: Optional[VideoMetadata] = None,
+) -> PreprocessingResult:
+    return PreprocessingService().process(video_path, metadata=metadata)
+
+
+__all__ = [
+    "AudioInfo",
+    "FrameInfo",
+    "PreprocessingResult",
+    "PreprocessingService",
+    "TranscriptInfo",
+    "TranscriptSegment",
+    "VideoMetadata",
+    "VideoPreprocessor",
+    "extract_audio",
+    "extract_frames",
+    "get_video_metadata",
+    "preprocess_video",
+    "transcribe_audio",
+    "validate_video",
+]

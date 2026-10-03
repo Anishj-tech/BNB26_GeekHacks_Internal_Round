@@ -18,14 +18,24 @@ from PIL import Image
 import torch
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
-from backend.preprocessing.video import get_video_metadata, VideoMetadata
-from backend.preprocessing.frames import sample_frames, FrameData
-from backend.models.face_consistency import (
-    detect_face,
-    extract_face_crop,
-    analyze_face_consistency,
-    FaceConsistencyResult,
-)
+try:
+    from backend.preprocessing.video import get_video_metadata, VideoMetadata
+    from backend.preprocessing.frames import sample_frames, FrameData
+    from backend.models.face_consistency import (
+        detect_face,
+        extract_face_crop,
+        analyze_face_consistency,
+        FaceConsistencyResult,
+    )
+except ImportError:
+    from preprocessing.video import get_video_metadata, VideoMetadata
+    from preprocessing.frames import sample_frames, FrameData
+    from models.face_consistency import (
+        detect_face,
+        extract_face_crop,
+        analyze_face_consistency,
+        FaceConsistencyResult,
+    )
 
 
 @dataclass
@@ -158,14 +168,11 @@ class VideoDetector:
         2. Top-25% synthetic score to detect localized temporal manipulations.
         3. Aggregated score = 0.5 * mean + 0.5 * top_25% score.
         4. Uncertainty = calculated from score variance and decision boundary margin.
-        5. Suspicious intervals: contiguous frames where fake_score >= 0.60.
-
-        Returns: (aggregated_score, uncertainty, direction, suspicious_intervals)
         """
         if not frame_scores:
-            return 0.0, 1.0, "inconclusive", []
+            return 0.5, 1.0, "inconclusive", []
 
-        fake_scores = np.array([fs.fake_score for fs in frame_scores], dtype=float)
+        fake_scores = [fs.fake_score for fs in frame_scores]
 
         mean_score = float(np.mean(fake_scores))
         top_k_count = max(1, int(np.ceil(len(fake_scores) * 0.25)))
@@ -365,3 +372,11 @@ def analyze_video(
         max_frames=max_frames,
         include_face_consistency=include_face_consistency,
     )
+
+
+__all__ = [
+    "FrameScore",
+    "VideoDetector",
+    "analyze_video",
+    "cv2_to_pil",
+]
