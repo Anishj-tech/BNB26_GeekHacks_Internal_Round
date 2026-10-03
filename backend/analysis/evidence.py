@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -14,3 +15,34 @@ class Evidence(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0")
     status: str
     time_range: Optional[TimeRange] = None
+
+
+class Verdict(str, Enum):
+    AUTHENTIC = "AUTHENTIC"
+    MANIPULATED = "MANIPULATED"
+    COORDINATED_SYNTHETIC = "COORDINATED SYNTHETIC"
+    INCONCLUSIVE_INSUFFICIENT_EVIDENCE = "INCONCLUSIVE — INSUFFICIENT EVIDENCE"
+    INCONCLUSIVE_CONFLICTING_EVIDENCE = "INCONCLUSIVE — CONFLICTING EVIDENCE"
+
+
+class Assessment(BaseModel):
+    verdict: str
+    synthetic_score: float = Field(ge=0.0, le=1.0, description="Synthetic score between 0.0 and 1.0")
+    consistency_score: float = Field(ge=0.0, le=1.0, description="Consistency score between 0.0 and 1.0")
+    evidence_coverage: float = Field(ge=0.0, le=1.0, description="Evidence coverage between 0.0 and 1.0")
+    conflict: bool
+
+
+class TimelineItem(BaseModel):
+    start: float
+    end: float
+    label: str
+    severity: str
+
+
+class InvestigationResult(BaseModel):
+    investigation_id: str
+    assessment: Assessment
+    evidence: list[Evidence] = Field(default_factory=list)
+    timeline: list[TimelineItem] = Field(default_factory=list)
+    explanation: Optional[str] = None
