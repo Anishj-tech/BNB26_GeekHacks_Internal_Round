@@ -2,15 +2,7 @@ import { useState } from 'react';
 
 /**
  * TrustLayer Button Component
- * 
- * Variants:
- * - primary: Brand blue (#5B8DEF) with subtle hover glow
- * - secondary: Elevated surface with fine border
- * - outline: Subtle border with transparent background
- * - ghost: Minimal transparent button
- * - match: Semantic agreement action (#4FB3A5)
- * - conflict: Semantic suspicious/conflict action (#E06C75)
- * - uncertainty: Semantic warning/uncertainty action (#D6A85F)
+ * Built according to DESIGN-claude.md (Warm Coral + Cream + Dark) & SKILL.md (Immediate press feedback)
  */
 export const Button = ({
   children,
@@ -22,6 +14,7 @@ export const Button = ({
   isLoading = false,
   className = '',
   onClick,
+  style = {},
   ...props
 }) => {
   const baseStyles = {
@@ -33,71 +26,69 @@ export const Button = ({
     fontWeight: 500,
     cursor: disabled || isLoading ? 'not-allowed' : 'pointer',
     opacity: disabled ? 0.45 : 1,
-    border: '1px solid transparent',
     borderRadius: 'var(--tl-radius-md)',
-    transition: 'all var(--tl-transition-fast)',
+    transition: 'background-color 140ms cubic-bezier(0.16, 1, 0.3, 1), transform 90ms cubic-bezier(0.16, 1, 0.3, 1), border-color 140ms ease',
     textDecoration: 'none',
     userSelect: 'none',
     outline: 'none',
     whiteSpace: 'nowrap',
     letterSpacing: '-0.01em',
+    lineHeight: 1,
   };
 
   const sizeStyles = {
     sm: {
-      fontSize: '0.75rem',
-      padding: '5px 10px',
-      height: '28px',
+      fontSize: '0.8125rem',
+      padding: '7px 12px',
+      height: '32px',
     },
     md: {
       fontSize: '0.875rem',
-      padding: '7px 14px',
-      height: '36px',
+      padding: '10px 18px',
+      height: '40px',
     },
     lg: {
       fontSize: '0.9375rem',
-      padding: '10px 18px',
-      height: '42px',
+      padding: '12px 24px',
+      height: '46px',
     },
   };
 
   const variantStyles = {
     primary: {
-      backgroundColor: 'var(--tl-brand)',
-      color: '#FFFFFF',
-      borderColor: 'rgba(255, 255, 255, 0.1)',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+      backgroundColor: 'var(--tl-primary)',
+      color: '#ffffff',
+      border: '1px solid var(--tl-primary)',
     },
     secondary: {
-      backgroundColor: 'var(--tl-surface-elevated)',
-      color: 'var(--tl-text-primary)',
-      borderColor: 'var(--tl-border)',
-      boxShadow: 'var(--tl-shadow-sm)',
+      backgroundColor: 'var(--tl-canvas)',
+      color: 'var(--tl-ink)',
+      border: '1px solid var(--tl-hairline)',
+    },
+    secondaryDark: {
+      backgroundColor: 'var(--tl-surface-dark-elevated)',
+      color: 'var(--tl-on-dark)',
+      border: '1px solid rgba(250, 249, 245, 0.12)',
     },
     outline: {
       backgroundColor: 'transparent',
-      color: 'var(--tl-text-primary)',
-      borderColor: 'var(--tl-border)',
+      color: 'var(--tl-ink)',
+      border: '1px solid var(--tl-hairline)',
     },
     ghost: {
       backgroundColor: 'transparent',
-      color: 'var(--tl-text-secondary)',
-      borderColor: 'transparent',
+      color: 'var(--tl-body)',
+      border: '1px solid transparent',
     },
     match: {
-      backgroundColor: 'var(--tl-match-subtle)',
-      color: 'var(--tl-match)',
-      borderColor: 'var(--tl-match-border)',
+      backgroundColor: 'rgba(93, 184, 166, 0.12)',
+      color: '#2a7566',
+      border: '1px solid rgba(93, 184, 166, 0.32)',
     },
     conflict: {
-      backgroundColor: 'var(--tl-conflict-subtle)',
-      color: 'var(--tl-conflict)',
-      borderColor: 'var(--tl-conflict-border)',
-    },
-    uncertainty: {
-      backgroundColor: 'var(--tl-uncertainty-subtle)',
-      color: 'var(--tl-uncertainty)',
-      borderColor: 'var(--tl-uncertainty-border)',
+      backgroundColor: 'rgba(198, 69, 69, 0.12)',
+      color: '#a33333',
+      border: '1px solid rgba(198, 69, 69, 0.32)',
     },
   };
 
@@ -108,70 +99,54 @@ export const Button = ({
     if (disabled || isLoading) return {};
 
     if (isActive) {
-      return { transform: 'scale(0.98)' };
+      return { transform: 'scale(0.97)' };
     }
 
     if (isHovered) {
       if (variant === 'primary') {
         return {
-          backgroundColor: '#4D7EDD',
-          boxShadow: '0 2px 10px rgba(91, 141, 239, 0.28)',
-          transform: 'translateY(-1px)',
+          backgroundColor: 'var(--tl-primary-active)',
+          borderColor: 'var(--tl-primary-active)',
         };
       }
       if (variant === 'secondary') {
         return {
-          backgroundColor: '#1E2C3A',
-          borderColor: 'var(--tl-border-highlight)',
-          color: 'var(--tl-text-primary)',
-          transform: 'translateY(-1px)',
+          backgroundColor: 'var(--tl-surface-soft)',
+          borderColor: '#d8cfc3',
+        };
+      }
+      if (variant === 'secondaryDark') {
+        return {
+          backgroundColor: '#2e2b27',
+          borderColor: 'rgba(250, 249, 245, 0.2)',
         };
       }
       if (variant === 'outline') {
         return {
-          borderColor: 'var(--tl-border-highlight)',
-          backgroundColor: 'rgba(255, 255, 255, 0.03)',
-          transform: 'translateY(-1px)',
+          backgroundColor: 'var(--tl-surface-card)',
+          borderColor: '#d1c7b8',
         };
       }
       if (variant === 'ghost') {
         return {
-          backgroundColor: 'rgba(255, 255, 255, 0.04)',
-          color: 'var(--tl-text-primary)',
-        };
-      }
-      if (variant === 'match') {
-        return {
-          backgroundColor: 'rgba(79, 179, 165, 0.16)',
-          borderColor: 'var(--tl-match)',
-          transform: 'translateY(-1px)',
-        };
-      }
-      if (variant === 'conflict') {
-        return {
-          backgroundColor: 'rgba(224, 108, 117, 0.16)',
-          borderColor: 'var(--tl-conflict)',
-          transform: 'translateY(-1px)',
-        };
-      }
-      if (variant === 'uncertainty') {
-        return {
-          backgroundColor: 'rgba(214, 168, 95, 0.16)',
-          borderColor: 'var(--tl-uncertainty)',
-          transform: 'translateY(-1px)',
+          backgroundColor: 'var(--tl-surface-soft)',
+          color: 'var(--tl-ink)',
         };
       }
     }
     return {};
   };
 
+  const currentVariant = variantStyles[variant] || variantStyles.primary;
+
   return (
     <button
       style={{
         ...baseStyles,
         ...sizeStyles[size],
-        ...variantStyles[variant],
+        ...currentVariant,
         ...getDynamicStyles(),
+        ...style,
       }}
       className={`tl-button ${className}`}
       disabled={disabled || isLoading}
@@ -199,9 +174,9 @@ export const Button = ({
         />
       ) : (
         <>
-          {Icon && iconPosition === 'left' && <Icon size={size === 'sm' ? 13 : size === 'lg' ? 18 : 15} />}
+          {Icon && iconPosition === 'left' && <Icon size={size === 'sm' ? 14 : size === 'lg' ? 18 : 16} />}
           {children}
-          {Icon && iconPosition === 'right' && <Icon size={size === 'sm' ? 13 : size === 'lg' ? 18 : 15} />}
+          {Icon && iconPosition === 'right' && <Icon size={size === 'sm' ? 14 : size === 'lg' ? 18 : 16} />}
         </>
       )}
     </button>

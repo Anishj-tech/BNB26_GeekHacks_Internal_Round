@@ -2,13 +2,7 @@ import { StatusDot } from './StatusDot';
 
 /**
  * TrustLayer Badge Component
- * 
- * Strict semantic styles:
- * - brand: System status / Primary (#5B8DEF)
- * - match: Verified / Consistent (#4FB3A5)
- * - conflict: Flagged / Mismatch (#E06C75)
- * - uncertainty: Low confidence (#D6A85F)
- * - neutral: Secondary metadata (#9AA6B2)
+ * Warm editorial badge styles with pill radii and refined contrast.
  */
 export const Badge = ({
   children,
@@ -23,42 +17,60 @@ export const Badge = ({
 }) => {
   const variantStyles = {
     brand: {
-      backgroundColor: 'var(--tl-brand-subtle)',
-      borderColor: 'var(--tl-brand-border)',
-      color: 'var(--tl-brand)',
+      backgroundColor: 'rgba(204, 120, 92, 0.12)',
+      borderColor: 'rgba(204, 120, 92, 0.32)',
+      color: 'var(--tl-primary-active)',
+    },
+    primary: {
+      backgroundColor: 'var(--tl-primary)',
+      borderColor: 'var(--tl-primary)',
+      color: '#ffffff',
     },
     match: {
-      backgroundColor: 'var(--tl-match-subtle)',
-      borderColor: 'var(--tl-match-border)',
-      color: 'var(--tl-match)',
+      backgroundColor: 'rgba(93, 184, 166, 0.14)',
+      borderColor: 'rgba(93, 184, 166, 0.36)',
+      color: '#2a7566',
     },
     conflict: {
-      backgroundColor: 'var(--tl-conflict-subtle)',
-      borderColor: 'var(--tl-conflict-border)',
-      color: 'var(--tl-conflict)',
+      backgroundColor: 'rgba(198, 69, 69, 0.12)',
+      borderColor: 'rgba(198, 69, 69, 0.32)',
+      color: '#a33333',
     },
     uncertainty: {
-      backgroundColor: 'var(--tl-uncertainty-subtle)',
-      borderColor: 'var(--tl-uncertainty-border)',
-      color: 'var(--tl-uncertainty)',
+      backgroundColor: 'rgba(232, 165, 90, 0.14)',
+      borderColor: 'rgba(232, 165, 90, 0.36)',
+      color: '#9e6216',
     },
     neutral: {
-      backgroundColor: 'rgba(255, 255, 255, 0.04)',
-      borderColor: 'var(--tl-border)',
-      color: 'var(--tl-text-secondary)',
+      backgroundColor: 'var(--tl-surface-card)',
+      borderColor: 'var(--tl-hairline)',
+      color: 'var(--tl-body)',
+    },
+    dark: {
+      backgroundColor: 'var(--tl-surface-dark-elevated)',
+      borderColor: 'rgba(250, 249, 245, 0.12)',
+      color: 'var(--tl-on-dark)',
     },
   };
 
   const sizeStyles = {
-    sm: {
-      fontSize: '0.6875rem',
+    xs: {
+      fontSize: '0.625rem',
       padding: '2px 6px',
       gap: '4px',
+      borderRadius: 'var(--tl-radius-pill)',
+    },
+    sm: {
+      fontSize: '0.6875rem',
+      padding: '3px 8px',
+      gap: '5px',
+      borderRadius: 'var(--tl-radius-pill)',
     },
     md: {
       fontSize: '0.75rem',
-      padding: '3px 8px',
+      padding: '4px 10px',
       gap: '6px',
+      borderRadius: 'var(--tl-radius-pill)',
     },
   };
 
@@ -70,11 +82,10 @@ export const Badge = ({
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        borderRadius: 'var(--tl-radius-sm)',
         border: '1px solid',
         fontFamily: mono ? 'var(--tl-font-mono)' : 'var(--tl-font-sans)',
         fontWeight: 500,
-        letterSpacing: mono ? '0.04em' : '-0.01em',
+        letterSpacing: mono ? '0.04em' : '0.01em',
         lineHeight: 1.2,
         userSelect: 'none',
         whiteSpace: 'nowrap',
@@ -85,7 +96,7 @@ export const Badge = ({
       className={`tl-badge ${className}`}
       {...props}
     >
-      {dot && <StatusDot variant={variant} size={size === 'sm' ? 'sm' : 'sm'} pulse={pulse} />}
+      {dot && <StatusDot variant={variant} size={size === 'xs' ? 'xs' : 'sm'} pulse={pulse} />}
       {children}
     </span>
   );

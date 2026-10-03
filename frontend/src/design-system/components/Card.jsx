@@ -2,16 +2,16 @@ import { useState } from 'react';
 
 /**
  * TrustLayer Card Component
- * 
- * Variants:
- * - surface: Standard background (#111820)
- * - elevated: Higher depth surface (#17212B)
- * - glass: Soft-glass with backdrop-blur
- * - technical: Forensic card with subtle corner hairline markers
+ * Following DESIGN-claude.md surface hierarchy:
+ * - surfaceCard: Light cream card (#efe9de)
+ * - canvas: Tinted cream (#faf9f5) with hairline border
+ * - dark: Dark navy product surface (#181715) for forensic chrome
+ * - darkElevated: Elevated dark surface (#252320)
+ * - coral: Signature coral callout card (#cc785c)
  */
 export const Card = ({
   children,
-  variant = 'surface',
+  variant = 'surfaceCard',
   interactive = false,
   className = '',
   style = {},
@@ -22,31 +22,42 @@ export const Card = ({
 
   const baseStyle = {
     position: 'relative',
-    borderRadius: 'var(--tl-radius-md)',
-    boxShadow: variant === 'elevated' ? 'var(--tl-shadow-md)' : 'var(--tl-shadow-sm)',
-    transition: 'all var(--tl-transition-fast)',
+    borderRadius: 'var(--tl-radius-lg)',
+    transition: 'border-color 160ms ease, background-color 160ms ease, transform 120ms cubic-bezier(0.16, 1, 0.3, 1)',
     boxSizing: 'border-box',
     overflow: 'hidden',
   };
 
   const variantStyles = {
+    surfaceCard: {
+      backgroundColor: 'var(--tl-surface-card)',
+      border: '1px solid var(--tl-hairline)',
+      color: 'var(--tl-ink)',
+    },
     surface: {
-      backgroundColor: 'var(--tl-surface)',
-      border: '1px solid var(--tl-border)',
+      backgroundColor: 'var(--tl-surface-card)',
+      border: '1px solid var(--tl-hairline)',
+      color: 'var(--tl-ink)',
     },
-    elevated: {
-      backgroundColor: 'var(--tl-surface-elevated)',
-      border: '1px solid var(--tl-border-highlight)',
+    canvas: {
+      backgroundColor: 'var(--tl-canvas)',
+      border: '1px solid var(--tl-hairline)',
+      color: 'var(--tl-ink)',
     },
-    glass: {
-      backgroundColor: 'rgba(17, 24, 32, 0.72)',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-      border: '1px solid var(--tl-border)',
+    dark: {
+      backgroundColor: 'var(--tl-surface-dark)',
+      border: '1px solid var(--tl-surface-dark-elevated)',
+      color: 'var(--tl-on-dark)',
     },
-    technical: {
-      backgroundColor: 'var(--tl-surface)',
-      border: '1px solid var(--tl-border)',
+    darkElevated: {
+      backgroundColor: 'var(--tl-surface-dark-elevated)',
+      border: '1px solid rgba(250, 249, 245, 0.08)',
+      color: 'var(--tl-on-dark)',
+    },
+    coral: {
+      backgroundColor: 'var(--tl-primary)',
+      border: '1px solid var(--tl-primary)',
+      color: '#ffffff',
     },
   };
 
@@ -55,38 +66,27 @@ export const Card = ({
         cursor: 'pointer',
         ...(isHovered && {
           transform: 'translateY(-2px)',
-          borderColor: 'var(--tl-border-highlight)',
-          boxShadow: 'var(--tl-shadow-md), 0 0 0 1px rgba(91, 141, 239, 0.1)',
+          borderColor: variant.startsWith('dark') ? 'rgba(250, 249, 245, 0.2)' : '#d5cbbe',
         }),
       }
     : {};
+
+  const currentVariant = variantStyles[variant] || variantStyles.surfaceCard;
 
   return (
     <div
       style={{
         ...baseStyle,
-        ...variantStyles[variant],
+        ...currentVariant,
         ...interactiveStyle,
         ...style,
       }}
-      className={`tl-card ${variant === 'technical' ? 'tl-technical-corner' : ''} ${className}`}
+      className={`tl-card ${className}`}
       onMouseEnter={() => interactive && setIsHovered(true)}
       onMouseLeave={() => interactive && setIsHovered(false)}
       onClick={onClick}
       {...props}
     >
-      {/* Subtle top inner glow line for soft-glass feel */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: '1px',
-          background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent)',
-          pointerEvents: 'none',
-        }}
-      />
       {children}
     </div>
   );
@@ -104,8 +104,8 @@ export const CardHeader = ({
   return (
     <div
       style={{
-        padding: '16px 20px',
-        borderBottom: '1px solid var(--tl-border-subtle)',
+        padding: '20px 24px 16px',
+        borderBottom: '1px solid var(--tl-hairline-soft)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -120,9 +120,9 @@ export const CardHeader = ({
             <h3
               style={{
                 fontFamily: 'var(--tl-font-sans)',
-                fontSize: '0.9375rem',
+                fontSize: '1rem',
                 fontWeight: 600,
-                color: 'var(--tl-text-primary)',
+                color: 'inherit',
                 letterSpacing: '-0.01em',
               }}
             >
@@ -136,7 +136,7 @@ export const CardHeader = ({
             style={{
               fontFamily: 'var(--tl-font-sans)',
               fontSize: '0.8125rem',
-              color: 'var(--tl-text-muted)',
+              color: 'var(--tl-muted)',
               marginTop: '2px',
             }}
           >
@@ -154,7 +154,7 @@ export const CardContent = ({ children, className = '', style = {} }) => {
   return (
     <div
       style={{
-        padding: '20px',
+        padding: '24px',
         ...style,
       }}
       className={`tl-card-content ${className}`}
@@ -168,12 +168,11 @@ export const CardFooter = ({ children, className = '', style = {} }) => {
   return (
     <div
       style={{
-        padding: '12px 20px',
-        borderTop: '1px solid var(--tl-border-subtle)',
+        padding: '14px 24px',
+        borderTop: '1px solid var(--tl-hairline-soft)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        backgroundColor: 'rgba(0, 0, 0, 0.15)',
         ...style,
       }}
       className={`tl-card-footer ${className}`}

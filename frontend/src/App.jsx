@@ -1,24 +1,40 @@
-import { useState } from 'react';
-import { LandingPage } from './landing/LandingPage';
-import { UploadInvestigationPage } from './upload/UploadInvestigationPage';
+import { RouterProvider, useRouter } from './router';
+import { LandingRoute } from './pages/LandingRoute';
+import { InvestigationNewRoute } from './pages/InvestigationNewRoute';
+import { InvestigationDashboardRoute } from './pages/InvestigationDashboardRoute';
+import { EvidenceExplorerRoute } from './pages/EvidenceExplorerRoute';
+import { TimelineRoute } from './pages/TimelineRoute';
+import { InvestigationHistoryRoute } from './pages/InvestigationHistoryRoute';
+import { HowItWorksRoute } from './pages/HowItWorksRoute';
 import './App.css';
 
-export default function App() {
-  const [currentView, setCurrentView] = useState('landing');
+function AppRoutes() {
+  const { route } = useRouter();
 
-  const navigateToUpload = () => {
-    setCurrentView('upload');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const navigateToLanding = () => {
-    setCurrentView('landing');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  if (currentView === 'upload') {
-    return <UploadInvestigationPage onBack={navigateToLanding} />;
+  switch (route.name) {
+    case 'landing':
+      return <LandingRoute />;
+    case 'investigation-new':
+      return <InvestigationNewRoute />;
+    case 'investigation-dashboard':
+      return <InvestigationDashboardRoute />;
+    case 'investigation-evidence':
+      return <EvidenceExplorerRoute />;
+    case 'investigation-timeline':
+      return <TimelineRoute />;
+    case 'investigations':
+      return <InvestigationHistoryRoute />;
+    case 'how-it-works':
+      return <HowItWorksRoute />;
+    default:
+      return <LandingRoute />;
   }
+}
 
-  return <LandingPage onStartInvestigation={navigateToUpload} />;
+export default function App() {
+  return (
+    <RouterProvider>
+      <AppRoutes />
+    </RouterProvider>
+  );
 }
