@@ -1,3 +1,10 @@
+torch>=2.0.0
+torchaudio>=2.0.0
+soundfile>=0.12.0
+faster-whisper>=1.0.0
+opencv-python-headless>=4.8.0
+scipy>=1.10.0
+python_speech_features>=0.6
 # TrustLayer - Video / Visual ML Module Dependencies
 # (Member 1 scope: Video Preprocessing, Frame Sampling, Visual Detector, Face Consistency)
 
