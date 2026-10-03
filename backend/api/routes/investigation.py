@@ -15,7 +15,7 @@ import math
 import os
 import tempfile
 import uuid
-from typing import Optional
+from typing import Any, Optional
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
@@ -23,6 +23,9 @@ try:
     from backend.analysis.evidence import (
         Assessment,
         Evidence,
+        EvidenceGraph,
+        GraphEdge,
+        GraphNode,
         InvestigationResult,
         TimelineItem,
         TimeRange,
@@ -39,6 +42,9 @@ except ImportError:
     from analysis.evidence import (
         Assessment,
         Evidence,
+        EvidenceGraph,
+        GraphEdge,
+        GraphNode,
         InvestigationResult,
         TimelineItem,
         TimeRange,
@@ -193,6 +199,335 @@ def build_investigation_timeline(
     return timeline
 
 
+def build_evidence_graph(
+    evidence: list[Evidence],
+    assessment: Assessment,
+    face_info: Optional[dict[str, Any]] = None,
+) -> EvidenceGraph:
+    """Build a deterministic evidence graph showing cross-modal relationships.
+
+    Visualizes how evidence supports or conflicts with the final assessment:
+    - Modality nodes: Video, Audio, Text, Audio-Video Consistency
+    - Signal nodes: Each underlying Evidence item with its score/confidence/status
+    - Relationships:
+      * video <-> audio (corroborates / conflicts_with)
+      * audio <-> text (corroborates / derived_from / conflicts_with)
+      * video <-> face (derived_from / corroborates / conflicts_with) when reliable face data exists
+      * audio <-> audio_video (synchronizes_with) when SyncNet data exists
+      * video <-> audio_video (synchronizes_with) when SyncNet data exists
+      * signal -> modality (derived_from)
+
+    Args:
+        evidence: List of Evidence objects.
+        assessment: Deterministic Assessment from TrustEngine.
+        face_info: Optional raw face_consistency telemetry from VideoDetector.
+
+    Returns:
+        EvidenceGraph with nodes and edges, or empty graph if no evidence.
+    """
+    if not evidence:
+        return EvidenceGraph(nodes=[], edges=[])
+
+    nodes: list[GraphNode] = []
+    edges: list[GraphEdge] = []
+    seen_node_ids: set[str] = set()
+    seen_edges: set[tuple[str, str, str]] = set()
+
+    def _add_node(node: GraphNode) -> None:
+        if node.id not in seen_node_ids:
+            nodes.append(node)
+            seen_node_ids.add(node.id)
+
+    def _add_edge(source: str, target: str, relation: str, weight: float, is_conflict: bool = False) -> None:
+        bounded_weight = round(max(0.0, min(1.0, float(weight))), 4)
+        edge_key = (source, target, relation)
+        if edge_key not in seen_edges:
+            edges.append(
+                GraphEdge(
+                    source=source,
+                    target=target,
+                    relation=relation,
+                    weight=bounded_weight,
+                    is_conflict=is_conflict,
+                )
+            )
+            seen_edges.add(edge_key)
+
+    # 1. Modality mapping definition
+    MODALITY_INFO = {
+        "video": ("mod_video", "Video"),
+        "audio": ("mod_audio", "Audio"),
+        "text": ("mod_text", "Text"),
+        "audio_video": ("mod_audio_video", "Audio-Video Consistency"),
+        "sync": ("mod_audio_video", "Audio-Video Consistency"),
+        "face": ("mod_face", "Face Consistency"),
+    }
+
+    # Group evidence items by normalized modality
+    evidence_by_modality: dict[str, list[Evidence]] = {}
+    for ev in evidence:
+        mod_key = ev.modality.lower().strip()
+        if mod_key in ("audio_video", "sync"):
+            mod_key = "audio_video"
+        evidence_by_modality.setdefault(mod_key, []).append(ev)
+
+    # Modality selection: strongest evidence item for node attributes
+    mod_nodes: dict[str, GraphNode] = {}
+    for mod_key, items in evidence_by_modality.items():
+        if not items:
+            continue
+        mod_id, mod_label = MODALITY_INFO.get(mod_key, (f"mod_{mod_key}", mod_key.replace("_", " ").title()))
+
+        def _item_strength(item: Evidence) -> tuple[int, float, float]:
+            st = item.status.lower()
+            if st == "suspicious":
+                return (2, item.score, item.confidence)
+            elif st in ("normal", "authentic"):
+                return (1, 1.0 - item.score, item.confidence)
+            return (0, item.confidence, 0.0)
+
+        best_item = max(items, key=_item_strength)
+        mod_score = round(max(0.0, min(1.0, float(best_item.score))), 4)
+        mod_conf = round(max(0.0, min(1.0, float(best_item.confidence))), 4)
+
+        mod_node = GraphNode(
+            id=mod_id,
+            type="modality",
+            label=mod_label,
+            status=best_item.status,
+            score=mod_score,
+            confidence=mod_conf,
+            metadata={"primary_signal": best_item.signal},
+        )
+        _add_node(mod_node)
+        mod_nodes[mod_id] = mod_node
+
+    # 2. Signal nodes for each Evidence item
+    SIGNAL_LABELS = {
+        "visual_synthetic": "Visual Synthetic Signal",
+        "synthetic_voice": "Synthetic Voice Signal",
+        "speech_transcript": "Speech Transcript",
+        "lip_sync": "Lip-Sync Consistency",
+        "face_consistency": "Face Consistency",
+        "facial_artifact": "Facial Artifact",
+    }
+
+    sig_counter: dict[str, int] = {}
+    for ev in evidence:
+        mod_key = ev.modality.lower().strip()
+        if mod_key in ("audio_video", "sync"):
+            mod_key = "audio_video"
+        mod_id = MODALITY_INFO.get(mod_key, (f"mod_{mod_key}", ""))[0]
+
+        sig_base = f"sig_{mod_key}_{ev.signal.lower()}"
+        sig_counter[sig_base] = sig_counter.get(sig_base, 0) + 1
+        sig_id = sig_base if sig_counter[sig_base] == 1 else f"{sig_base}_{sig_counter[sig_base]}"
+
+        label = SIGNAL_LABELS.get(ev.signal) or ev.signal.replace("_", " ").title()
+
+        sig_meta: dict[str, Any] = {}
+        if ev.time_range is not None:
+            try:
+                sig_meta["time_range"] = {
+                    "start": round(float(ev.time_range.start), 2),
+                    "end": round(float(ev.time_range.end), 2),
+                }
+            except (ValueError, TypeError):
+                pass
+
+        sig_score = round(max(0.0, min(1.0, float(ev.score))), 4)
+        sig_conf = round(max(0.0, min(1.0, float(ev.confidence))), 4)
+
+        sig_node = GraphNode(
+            id=sig_id,
+            type="signal",
+            label=label,
+            status=ev.status,
+            score=sig_score,
+            confidence=sig_conf,
+            metadata=sig_meta,
+        )
+        _add_node(sig_node)
+
+        # Connect signal to its modality via derived_from
+        if mod_id in seen_node_ids:
+            _add_edge(
+                source=sig_id,
+                target=mod_id,
+                relation="derived_from",
+                weight=sig_conf,
+                is_conflict=False,
+            )
+
+    # 3. Create FACE node from reliable existing video evidence if available
+    face_node_id: Optional[str] = None
+    if "mod_face" in seen_node_ids:
+        face_node_id = "mod_face"
+    elif face_info and isinstance(face_info, dict):
+        num_faces = face_info.get("num_faces_detected", 0)
+        status_str = str(face_info.get("status", "")).lower()
+        mean_sim = face_info.get("mean_embedding_similarity")
+        is_consistent = face_info.get("is_consistent")
+
+        if (
+            isinstance(num_faces, int)
+            and num_faces >= 2
+            and status_str in ("consistent", "inconsistent")
+            and mean_sim is not None
+        ):
+            try:
+                sim_float = float(mean_sim)
+                if not math.isnan(sim_float) and 0.0 <= sim_float <= 1.0:
+                    face_score = round(max(0.0, min(1.0, 1.0 - sim_float)), 4)
+                    face_status = (
+                        "suspicious"
+                        if (is_consistent is False or status_str == "inconsistent" or face_score >= 0.50)
+                        else "normal"
+                    )
+                    face_node = GraphNode(
+                        id="node_face",
+                        type="face",
+                        label="Face Consistency",
+                        status=face_status,
+                        score=face_score,
+                        confidence=0.85,
+                        metadata={
+                            "num_faces_detected": num_faces,
+                            "mean_embedding_similarity": round(sim_float, 4),
+                            "status": status_str,
+                        },
+                    )
+                    _add_node(face_node)
+                    mod_nodes["node_face"] = face_node
+                    face_node_id = "node_face"
+            except (ValueError, TypeError):
+                pass
+
+    # 4. Modality-to-Modality Relationships
+    # A. video <-> audio
+    if "mod_video" in mod_nodes and "mod_audio" in mod_nodes:
+        v_node = mod_nodes["mod_video"]
+        a_node = mod_nodes["mod_audio"]
+        v_susp = v_node.status == "suspicious" or (v_node.score is not None and v_node.score >= 0.65)
+        a_susp = a_node.status == "suspicious" or (a_node.score is not None and a_node.score >= 0.65)
+        v_norm = v_node.status == "normal" or (v_node.score is not None and v_node.score <= 0.35)
+        a_norm = a_node.status == "normal" or (a_node.score is not None and a_node.score <= 0.35)
+        v_conf = v_node.confidence or 0.5
+        a_conf = a_node.confidence or 0.5
+
+        if assessment.conflict or (v_susp and a_norm and v_conf >= 0.60 and a_conf >= 0.60) or (v_norm and a_susp and v_conf >= 0.60 and a_conf >= 0.60):
+            rel = "conflicts_with"
+            is_conf = True
+            wt = abs((v_node.score or 0.5) - (a_node.score or 0.5))
+            if wt == 0.0:
+                wt = 0.80
+        elif v_susp and a_susp:
+            rel = "corroborates"
+            is_conf = False
+            wt = assessment.consistency_score if assessment.consistency_score > 0 else (v_conf + a_conf) / 2.0
+        elif v_norm and a_norm:
+            rel = "corroborates"
+            is_conf = False
+            wt = assessment.consistency_score if assessment.consistency_score > 0 else 0.85
+        else:
+            if assessment.consistency_score >= 0.50:
+                rel = "corroborates"
+                is_conf = False
+                wt = assessment.consistency_score
+            else:
+                rel = "conflicts_with"
+                is_conf = True
+                wt = 1.0 - assessment.consistency_score
+
+        _add_edge(source="mod_video", target="mod_audio", relation=rel, weight=wt, is_conflict=is_conf)
+
+    # B. audio <-> text
+    if "mod_audio" in mod_nodes and "mod_text" in mod_nodes:
+        a_node = mod_nodes["mod_audio"]
+        t_node = mod_nodes["mod_text"]
+        a_susp = a_node.status == "suspicious" or (a_node.score is not None and a_node.score >= 0.65)
+        t_susp = t_node.status == "suspicious" or (t_node.score is not None and t_node.score >= 0.65)
+        t_conf = t_node.confidence or 0.5
+        a_conf = a_node.confidence or 0.5
+
+        if assessment.conflict and a_susp and (t_node.status == "normal") and a_conf >= 0.60 and t_conf >= 0.80 and t_node.metadata.get("primary_signal") != "speech_transcript":
+            rel = "conflicts_with"
+            is_conf = True
+            wt = abs((a_node.score or 0.5) - (t_node.score or 0.5))
+        elif a_susp and t_susp:
+            rel = "corroborates"
+            is_conf = False
+            wt = (a_conf + t_conf) / 2.0
+        elif a_node.status == "normal" and t_node.status == "normal":
+            rel = "corroborates"
+            is_conf = False
+            wt = (a_conf + t_conf) / 2.0
+        else:
+            rel = "derived_from"
+            is_conf = False
+            wt = t_conf
+
+        _add_edge(source="mod_audio", target="mod_text", relation=rel, weight=wt, is_conflict=is_conf)
+
+    # C. video <-> face (when face evidence exists)
+    if face_node_id and "mod_video" in mod_nodes and face_node_id in mod_nodes:
+        v_node = mod_nodes["mod_video"]
+        f_node = mod_nodes[face_node_id]
+        v_susp = v_node.status == "suspicious" or (v_node.score is not None and v_node.score >= 0.65)
+        f_susp = f_node.status == "suspicious" or (f_node.score is not None and f_node.score >= 0.50)
+        v_norm = v_node.status == "normal" or (v_node.score is not None and v_node.score <= 0.35)
+        f_norm = f_node.status == "normal" or (f_node.score is not None and f_node.score < 0.50)
+        v_conf = v_node.confidence or 0.5
+        f_conf = f_node.confidence or 0.5
+
+        if (v_susp and f_norm and v_conf >= 0.60 and f_conf >= 0.60) or (v_norm and f_susp and v_conf >= 0.60 and f_conf >= 0.60):
+            rel = "conflicts_with"
+            is_conf = True
+            wt = abs((v_node.score or 0.5) - (f_node.score or 0.5))
+        elif v_susp and f_susp:
+            rel = "corroborates"
+            is_conf = False
+            wt = (v_conf + f_conf) / 2.0
+        else:
+            rel = "derived_from"
+            is_conf = False
+            wt = f_conf
+
+        _add_edge(source="mod_video", target=face_node_id, relation=rel, weight=wt, is_conflict=is_conf)
+
+    # D. audio <-> audio_video and video <-> audio_video (when SyncNet exists)
+    if "mod_audio_video" in mod_nodes:
+        av_node = mod_nodes["mod_audio_video"]
+        av_conf = av_node.confidence or 0.85
+        av_susp = av_node.status == "suspicious"
+
+        if "mod_video" in mod_nodes:
+            v_node = mod_nodes["mod_video"]
+            v_norm = v_node.status == "normal" or (v_node.score is not None and v_node.score <= 0.35)
+            is_conf = av_susp and v_norm and (v_node.confidence or 0.5) >= 0.60 and av_conf >= 0.60
+            _add_edge(
+                source="mod_video",
+                target="mod_audio_video",
+                relation="synchronizes_with",
+                weight=av_conf,
+                is_conflict=is_conf,
+            )
+
+        if "mod_audio" in mod_nodes:
+            a_node = mod_nodes["mod_audio"]
+            a_norm = a_node.status == "normal" or (a_node.score is not None and a_node.score <= 0.35)
+            is_conf = av_susp and a_norm and (a_node.confidence or 0.5) >= 0.60 and av_conf >= 0.60
+            _add_edge(
+                source="mod_audio",
+                target="mod_audio_video",
+                relation="synchronizes_with",
+                weight=av_conf,
+                is_conflict=is_conf,
+            )
+
+    return EvidenceGraph(nodes=nodes, edges=edges)
+
+
 @router.post("/investigations", response_model=InvestigationResult)
 async def run_investigation(
     request: Request,
@@ -257,6 +592,7 @@ async def run_investigation(
     timeline: list[TimelineItem] = []
     sub_intervals: list[TimelineItem] = []
     transcript_timeline: list[TimelineItem] = []
+    face_consistency_info: Optional[dict[str, Any]] = None
 
     if video_ref is not None:
         # Step 16: Real ML Video Analysis via VideoDetector
@@ -265,6 +601,8 @@ async def run_investigation(
             video_path=video_ref,
             include_face_consistency=True,
         )
+        if isinstance(video_result, dict):
+            face_consistency_info = video_result.get("face_consistency")
 
         evidence: list[Evidence] = []
 
@@ -689,19 +1027,30 @@ async def run_investigation(
         timeline=timeline,
     )
 
+    # Step 8: Build Evidence Graph
+    graph = build_evidence_graph(
+        evidence=evidence,
+        assessment=assessment,
+        face_info=face_consistency_info,
+    )
+
     return InvestigationResult(
         investigation_id=inv_id,
         assessment=assessment,
         evidence=evidence,
         timeline=timeline,
         explanation=explanation,
+        graph=graph,
     )
 
 
 __all__ = [
     "Assessment",
     "Evidence",
+    "EvidenceGraph",
     "GeminiExplanationService",
+    "GraphEdge",
+    "GraphNode",
     "InvestigationRequest",
     "InvestigationResult",
     "PreprocessingService",
@@ -710,6 +1059,7 @@ __all__ = [
     "TimeRange",
     "Verdict",
     "VideoDetector",
+    "build_evidence_graph",
     "build_investigation_timeline",
     "create_mock_evidence",
     "router",

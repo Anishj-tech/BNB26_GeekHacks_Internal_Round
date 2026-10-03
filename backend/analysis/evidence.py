@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
@@ -40,9 +40,33 @@ class TimelineItem(BaseModel):
     severity: str
 
 
+class GraphNode(BaseModel):
+    id: str
+    type: str
+    label: str
+    status: str
+    score: Optional[float] = None
+    confidence: Optional[float] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+    relation: str
+    weight: float = Field(default=1.0, ge=0.0, le=1.0)
+    is_conflict: bool = False
+
+
+class EvidenceGraph(BaseModel):
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
+
+
 class InvestigationResult(BaseModel):
     investigation_id: str
     assessment: Assessment
     evidence: list[Evidence] = Field(default_factory=list)
     timeline: list[TimelineItem] = Field(default_factory=list)
     explanation: Optional[str] = None
+    graph: Optional[EvidenceGraph] = None
