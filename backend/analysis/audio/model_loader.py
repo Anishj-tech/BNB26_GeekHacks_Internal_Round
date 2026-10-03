@@ -1,14 +1,20 @@
-"""Model loader helper for AASIST audio anti-spoofing detection.
+"""Model loader helper for TrustLayer audio ML models.
 
-Handles lazy loading, checkpoint resolution, and CPU caching of AASIST-L weights.
+Handles lazy loading, checkpoint resolution, and CPU caching of:
+1. AASIST-L spoof detector
+2. faster-whisper speech-to-text model
 """
 
 import os
 from typing import Any, Dict, Optional
 
-# Lazy-loaded singleton cache
+# Lazy-loaded singleton caches
 _AASIST_MODEL = None
 _AASIST_DEVICE = None
+
+_WHISPER_MODEL = None
+_WHISPER_MODEL_SIZE = None
+_WHISPER_DEVICE = None
 
 AASIST_CONFIG: Dict[str, Any] = {
     "architecture": "AASIST",
@@ -61,3 +67,37 @@ def load_aasist_model(device: Optional[str] = "cpu"):
     _AASIST_MODEL = model
     _AASIST_DEVICE = device
     return _AASIST_MODEL
+
+
+def load_whisper_model(model_size: str = "tiny", device: str = "cpu", compute_type: str = "int8"):
+    """Lazily load and cache the faster-whisper STT model.
+
+    Args:
+        model_size: Whisper model size ("tiny", "base", "small", etc.).
+        device: Device string ("cpu" or "cuda").
+        compute_type: Computation quantization ("int8", "float32", etc.).
+
+    Returns:
+        Loaded WhisperModel instance.
+
+    Raises:
+        ImportError: If faster_whisper is not installed.
+        Exception: If model instantiation or loading fails.
+    """
+    global _WHISPER_MODEL, _WHISPER_MODEL_SIZE, _WHISPER_DEVICE
+
+    if (
+        _WHISPER_MODEL is not None
+        and _WHISPER_MODEL_SIZE == model_size
+        and _WHISPER_DEVICE == device
+    ):
+        return _WHISPER_MODEL
+
+    from faster_whisper import WhisperModel
+
+    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+
+    _WHISPER_MODEL = model
+    _WHISPER_MODEL_SIZE = model_size
+    _WHISPER_DEVICE = device
+    return _WHISPER_MODEL
