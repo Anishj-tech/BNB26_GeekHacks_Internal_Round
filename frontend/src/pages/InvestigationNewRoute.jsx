@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   Upload,
   Video,
@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Trash2,
   Sparkles,
+  AlertCircle,
 } from 'lucide-react';
 import { useRouter } from '../router';
 import { TrustLayerShell } from '../components/shell/TrustLayerShell';
@@ -28,6 +29,8 @@ export const InvestigationNewRoute = () => {
   // Pipeline execution state
   const [isProcessing, setIsProcessing] = useState(false);
   const [targetInvestigationId, setTargetInvestigationId] = useState(null);
+  const [analysisError, setAnalysisError] = useState(null);
+  const targetIdRef = useRef(null);
 
   // Sample Presets for instantaneous testing
   const presets = [
@@ -80,6 +83,9 @@ export const InvestigationNewRoute = () => {
     if (!videoFile) return;
 
     setIsProcessing(true);
+    setAnalysisError(null);
+    setTargetInvestigationId(null);
+    targetIdRef.current = null;
 
     try {
       const newInvestigation = await investigationService.createInvestigation({
@@ -88,9 +94,12 @@ export const InvestigationNewRoute = () => {
         transcriptText,
       });
 
-      setTargetInvestigationId(newInvestigation.id);
+      const invId = newInvestigation.id || newInvestigation.investigation_id;
+      setTargetInvestigationId(invId);
+      targetIdRef.current = invId;
     } catch (err) {
       console.error('Failed to create investigation:', err);
+      setAnalysisError(err.message || 'Investigation pipeline failed. Please ensure the backend is running.');
       setIsProcessing(false);
     }
   };
@@ -102,12 +111,19 @@ export const InvestigationNewRoute = () => {
           filename: videoFile?.name || 'uploaded_evidence.mp4',
           size: videoFile ? `${(videoFile.size / (1024 * 1024)).toFixed(1)} MB` : '14.2 MB',
           type: videoFile?.type || 'video/mp4',
-          hash: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+          hash: 'Computing cryptographic SHA-256 seal...',
         }}
         hasAudio={Boolean(audioFile)}
         hasTranscript={Boolean(transcriptText?.trim())}
         onComplete={() => {
-          navigate(`/investigation/${targetInvestigationId || 'INV-2026-001'}`);
+          const checkAndNavigate = () => {
+            if (targetIdRef.current) {
+              navigate(`/investigation/${targetIdRef.current}`);
+            } else {
+              setTimeout(checkAndNavigate, 250);
+            }
+          };
+          checkAndNavigate();
         }}
       />
     );
@@ -122,6 +138,32 @@ export const InvestigationNewRoute = () => {
       ]}
       maxWidth="1180px"
     >
+      {/* ERROR BANNER */}
+      {analysisError && (
+        <div
+          style={{
+            marginBottom: '24px',
+            padding: '16px 20px',
+            backgroundColor: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '12px',
+          }}
+        >
+          <AlertCircle size={20} color="var(--tl-error, #ef4444)" style={{ flexShrink: 0, marginTop: '2px' }} />
+          <div>
+            <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--tl-error, #ef4444)', marginBottom: '4px' }}>
+              Analysis Pipeline Error
+            </div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--tl-text, #e2e8f0)', lineHeight: 1.5 }}>
+              {analysisError}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* HEADER SECTION */}
       <div style={{ marginBottom: '32px' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
