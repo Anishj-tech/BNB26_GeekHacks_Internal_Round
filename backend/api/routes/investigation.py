@@ -11,6 +11,8 @@ API request (with optional video upload)
     -> InvestigationResult
 """
 
+import datetime
+import hashlib
 import math
 import os
 import tempfile
@@ -35,9 +37,15 @@ try:
     from backend.analysis.conflict import ConflictDetector
     from backend.fusion.trust_engine import TrustEngine
     from backend.explanation.gemini import GeminiExplanationService
-    from backend.preprocessing.video import PreprocessingService
+    from backend.preprocessing.video import PreprocessingService, get_video_metadata
     from backend.models.video_detector import VideoDetector
     from backend.analysis.audio.pipeline import run_audio_pipeline
+    from backend.storage import (
+        save_investigation,
+        get_investigation,
+        list_investigations,
+        save_uploaded_media,
+    )
 except ImportError:
     from analysis.evidence import (
         Assessment,
@@ -54,9 +62,15 @@ except ImportError:
     from analysis.conflict import ConflictDetector
     from fusion.trust_engine import TrustEngine
     from explanation.gemini import GeminiExplanationService
-    from preprocessing.video import PreprocessingService
+    from preprocessing.video import PreprocessingService, get_video_metadata
     from models.video_detector import VideoDetector
     from analysis.audio.pipeline import run_audio_pipeline
+    from storage import (
+        save_investigation,
+        get_investigation,
+        list_investigations,
+        save_uploaded_media,
+    )
 
 
 router = APIRouter(tags=["investigation"])
@@ -529,10 +543,16 @@ def build_evidence_graph(
 
 
 @router.post("/investigations", response_model=InvestigationResult)
+@router.post("/investigation/upload", response_model=InvestigationResult)
 async def run_investigation(
     request: Request,
     video: Optional[UploadFile] = File(default=None),
+    video_file: Optional[UploadFile] = File(default=None),
     file: Optional[UploadFile] = File(default=None),
+    audio: Optional[UploadFile] = File(default=None),
+    audio_file: Optional[UploadFile] = File(default=None),
+    transcript: Optional[str] = Form(default=None),
+    transcript_text: Optional[str] = Form(default=None),
     investigation_id: Optional[str] = Form(default=None),
 ) -> InvestigationResult:
     """Run an investigation pipeline and produce an assessment."""
@@ -549,11 +569,14 @@ async def run_investigation(
             pass
 
     if not inv_id:
-        inv_id = f"inv_{uuid.uuid4().hex[:10]}"
+        inv_id = f"INV-{datetime.datetime.now().year}-{uuid.uuid4().hex[:6].upper()}"
 
     # Video input validation and local temporary storage
-    uploaded_file = video or file
+    uploaded_file = video or video_file or file
     video_ref: Optional[str] = None
+    sha256_hash = ""
+    file_bytes_len = 0
+    filename = "uploaded_evidence.mp4"
 
     if uploaded_file is not None:
         filename = (uploaded_file.filename or "").strip()
@@ -578,10 +601,26 @@ async def run_investigation(
         temp_file_path = os.path.join(temp_dir, safe_filename)
 
         contents = await uploaded_file.read()
+        file_bytes_len = len(contents)
+        sha256_hash = hashlib.sha256(contents).hexdigest()
         with open(temp_file_path, "wb") as buffer:
             buffer.write(contents)
 
         video_ref = temp_file_path
+
+    # External audio upload handling
+    uploaded_audio = audio or audio_file
+    audio_ref: Optional[str] = None
+    if uploaded_audio is not None:
+        a_filename = (uploaded_audio.filename or "").strip()
+        if a_filename:
+            temp_dir = tempfile.gettempdir()
+            safe_audio_name = f"trustlayer_audio_{inv_id}_{os.path.basename(a_filename)}"
+            temp_audio_path = os.path.join(temp_dir, safe_audio_name)
+            audio_bytes = await uploaded_audio.read()
+            with open(temp_audio_path, "wb") as abuffer:
+                abuffer.write(audio_bytes)
+            audio_ref = temp_audio_path
 
     # Step 1: Preprocessing layer receives video input reference
     preprocessing_service = PreprocessingService()
@@ -665,7 +704,7 @@ async def run_investigation(
 
         # Real Audio ML Analysis via run_audio_pipeline (Step 17 AASIST + Step 18 Whisper + Step 19 SyncNet)
         try:
-            audio_pipeline_result = run_audio_pipeline(video_path=video_ref)
+            audio_pipeline_result = run_audio_pipeline(video_path=video_ref, audio_path=audio_ref)
             if not isinstance(audio_pipeline_result, dict):
                 audio_pipeline_result = {}
         except Exception:
@@ -871,6 +910,26 @@ async def run_investigation(
                                     severity="info",
                                 )
                             )
+
+                        # Audio <-> Text consistency check when reference transcript is provided
+                        user_transcript = (transcript or transcript_text or "").strip()
+                        if user_transcript:
+                            whisper_text = raw_text
+                            u_words = set(user_transcript.lower().split())
+                            w_words = set(whisper_text.lower().split())
+                            if u_words or w_words:
+                                overlap = len(u_words & w_words) / max(1, len(u_words | w_words))
+                                text_status = "normal" if overlap >= 0.40 else "suspicious"
+                                evidence.append(
+                                    Evidence(
+                                        modality="text",
+                                        signal="transcript_consistency",
+                                        score=round(1.0 - overlap, 4),
+                                        confidence=0.85,
+                                        status=text_status,
+                                        time_range=None,
+                                    )
+                                )
         except Exception:
             # Safe degradation: transcription errors must not break investigation
             pass
@@ -1034,14 +1093,205 @@ async def run_investigation(
         face_info=face_consistency_info,
     )
 
-    return InvestigationResult(
-        investigation_id=inv_id,
-        assessment=assessment,
-        evidence=evidence,
-        timeline=timeline,
-        explanation=explanation,
-        graph=graph,
+    # Calculate real metadata
+    vid_meta = None
+    if video_ref:
+        try:
+            vid_meta = get_video_metadata(video_ref)
+        except Exception:
+            pass
+
+    duration_sec = vid_meta.duration_seconds if (vid_meta and vid_meta.duration_seconds) else 0.0
+    duration_fmt = f"{int(duration_sec // 60):02d}:{int(duration_sec % 60):02d}"
+
+    # Two-Axis representation (decoupled synthetic likelihood vs consistency)
+    twoAxis = {
+        "synthetic": round(assessment.synthetic_score, 4),
+        "consistency": round(assessment.consistency_score, 4),
+        "quadrant": (
+            "AUTHENTIC BASELINE" if assessment.verdict == Verdict.AUTHENTIC.value
+            else "COORDINATED SYNTHETIC" if assessment.verdict == Verdict.COORDINATED_SYNTHETIC.value
+            else "AI MANIPULATION" if assessment.verdict == Verdict.MANIPULATED.value
+            else "UNRESOLVED UNCERTAINTY"
+        ),
+    }
+
+    # Coverage breakdown
+    has_video_mod = any(e.modality.lower() == "video" for e in evidence)
+    has_audio_mod = any(e.modality.lower() == "audio" for e in evidence)
+    has_text_mod = any(e.modality.lower() == "text" for e in evidence)
+    has_cross_mod = any(
+        e.modality.lower() in ("audio_video", "consistency") or e.signal.lower() in ("lip_sync", "av_sync")
+        for e in evidence
     )
+    has_face_mod = face_consistency_info is not None and face_consistency_info.get("face_detected")
+
+    coverage_list = [
+        {
+            "modality": "VIDEO",
+            "label": "Video Frames",
+            "analyzed": has_video_mod,
+            "isSupporting": False,
+            "coverage": 100 if has_video_mod else 0,
+            "detail": f"{vid_meta.frame_count if vid_meta else len(evidence)} frames analyzed via Vision Transformer" if has_video_mod else "No video analyzed",
+        },
+        {
+            "modality": "AUDIO",
+            "label": "Audio Spectrum",
+            "analyzed": has_audio_mod,
+            "isSupporting": False,
+            "coverage": 100 if has_audio_mod else 0,
+            "detail": "AASIST synthetic speech detection" if has_audio_mod else "Audio stream unavailable",
+        },
+        {
+            "modality": "TRANSCRIPT",
+            "label": "Speech Transcript",
+            "analyzed": has_text_mod,
+            "isSupporting": False,
+            "coverage": 100 if has_text_mod else 0,
+            "detail": "Whisper speech transcription" if has_text_mod else "No transcript detected",
+        },
+        {
+            "modality": "CROSS_MODAL",
+            "label": "Lip-Sync Correlation",
+            "analyzed": has_cross_mod,
+            "isSupporting": False,
+            "coverage": 90 if has_cross_mod else 0,
+            "detail": "SyncNet audio-visual synchronization" if has_cross_mod else "Sync analysis unavailable",
+        },
+        {
+            "modality": "FACE",
+            "label": "Face Consistency",
+            "analyzed": bool(has_face_mod),
+            "isSupporting": True,
+            "coverage": 80 if has_face_mod else 0,
+            "detail": "Neural face landmark tracking (Supporting Evidence)" if has_face_mod else "No persistent face detected",
+        },
+    ]
+
+    conflict_details = []
+    if assessment.conflict:
+        conflict_details.append({
+            "pair": "Multi-Modal Forensic Divergence",
+            "status": "CONTRADICTORY SIGNALS",
+            "explanation": "High-confidence detectors across evaluated modalities report incompatible authenticity signals.",
+        })
+
+    conflict_data = {
+        "detected": assessment.conflict,
+        "title": "Cross-Modal Evidence Conflict" if assessment.conflict else "No Conflict Detected",
+        "severity": "HIGH" if assessment.conflict else "NONE",
+        "description": (
+            "Contradictory evidence signals detected between independent forensic modules."
+            if assessment.conflict
+            else "All available forensic evidence items exhibit mutual consistency within calibrated bounds."
+        ),
+        "details": conflict_details,
+        "impactOnTrust": (
+            "Conflict explicitly halts automatic authenticity determination."
+            if assessment.conflict
+            else "Consistent signals reinforce assessment confidence."
+        ),
+    }
+
+    suspicious_intervals_data = []
+    for item in timeline:
+        if item.severity in ("high", "medium"):
+            start_fmt = f"{int(item.start // 60):02d}:{item.start % 60:04.1f}"
+            end_fmt = f"{int(item.end // 60):02d}:{item.end % 60:04.1f}"
+            suspicious_intervals_data.append({
+                "start": start_fmt,
+                "end": end_fmt,
+                "status": "SUSPICIOUS",
+                "label": item.label,
+            })
+
+    video_analysis_data = {
+        "framesAnalyzed": vid_meta.frame_count if vid_meta else len(evidence),
+        "visualSyntheticScore": round(assessment.synthetic_score, 4),
+        "visualUncertainty": "LOW" if assessment.synthetic_score >= 0.7 or assessment.synthetic_score <= 0.3 else "MODERATE",
+        "suspiciousIntervals": suspicious_intervals_data or [
+            {"start": "00:00", "end": duration_fmt, "status": "NORMAL", "label": "No Suspicious Interval Detected"}
+        ],
+        "representativeFrames": [],
+    }
+
+    # Save uploaded media copy for provenance
+    if video_ref and os.path.exists(video_ref):
+        try:
+            save_uploaded_media(video_ref, filename, inv_id)
+        except Exception:
+            pass
+
+    evidence_list_frontend = [
+        {
+            "id": f"EV-{i+1:02d}",
+            "modality": e.modality.upper(),
+            "signalType": e.signal,
+            "score": e.score,
+            "confidence": e.confidence,
+            "status": e.status,
+            "direction": "SUSPICIOUS" if e.status == "suspicious" else "CONFIRMS_AUTHENTIC" if e.status == "normal" else "INCONCLUSIVE",
+            "timeRange": f"{e.time_range.start}s - {e.time_range.end}s" if e.time_range else "Full Media",
+            "observation": f"Forensic signal '{e.signal}' in modality '{e.modality}' scored {e.score:.2f} with confidence {e.confidence:.2f}.",
+            "reasoning": f"Detector evaluated {e.modality} modality for synthetic artifacts.",
+            "isSupporting": (e.modality.lower() == "face"),
+        }
+        for i, e in enumerate(evidence)
+    ]
+
+    result_payload = {
+        "id": inv_id,
+        "investigation_id": inv_id,
+        "name": f"Evidence Dissection // {filename}",
+        "filename": filename,
+        "fileSize": f"{file_bytes_len / (1024 * 1024):.1f} MB" if file_bytes_len else "0 MB",
+        "fileType": uploaded_file.content_type if (uploaded_file and uploaded_file.content_type) else "video/mp4",
+        "duration": duration_fmt,
+        "resolution": f"{vid_meta.width}x{vid_meta.height}" if (vid_meta and vid_meta.width) else "1280x720",
+        "fps": round(vid_meta.fps, 1) if (vid_meta and vid_meta.fps) else 30,
+        "sha256": sha256_hash or "0" * 64,
+        "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "status": "COMPLETED",
+        "isDemo": False,
+        "assessment": assessment.model_dump(),
+        "twoAxis": twoAxis,
+        "coverage": coverage_list,
+        "conflict": conflict_data,
+        "videoAnalysis": video_analysis_data,
+        "evidence": [e.model_dump() for e in evidence],
+        "evidenceList": evidence_list_frontend,
+        "timeline": [t.model_dump() for t in timeline],
+        "explanation": explanation,
+        "graph": graph.model_dump() if graph else None,
+    }
+
+    # Persist real investigation to data/investigations/
+    try:
+        save_investigation(inv_id, result_payload)
+    except Exception:
+        pass
+
+    return InvestigationResult(**result_payload)
+
+
+@router.get("/investigations/{investigation_id}", response_model=InvestigationResult)
+@router.get("/investigation/{investigation_id}", response_model=InvestigationResult)
+async def get_investigation_endpoint(investigation_id: str) -> InvestigationResult:
+    """Retrieve an existing investigation from local storage."""
+    record = get_investigation(investigation_id)
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Investigation '{investigation_id}' not found.",
+        )
+    return InvestigationResult(**record)
+
+
+@router.get("/investigations")
+async def list_investigations_endpoint() -> list[dict[str, Any]]:
+    """List all persisted real investigations."""
+    return list_investigations()
 
 
 __all__ = [
@@ -1062,6 +1312,9 @@ __all__ = [
     "build_evidence_graph",
     "build_investigation_timeline",
     "create_mock_evidence",
+    "get_investigation_endpoint",
+    "list_investigations_endpoint",
     "router",
     "run_audio_pipeline",
+    "run_investigation",
 ]

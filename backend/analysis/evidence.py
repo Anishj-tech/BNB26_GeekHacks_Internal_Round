@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TimeRange(BaseModel):
@@ -64,6 +64,8 @@ class EvidenceGraph(BaseModel):
 
 
 class InvestigationResult(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     investigation_id: str
     assessment: Assessment
     evidence: list[Evidence] = Field(default_factory=list)
