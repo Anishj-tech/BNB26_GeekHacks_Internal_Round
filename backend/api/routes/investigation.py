@@ -100,6 +100,99 @@ def create_mock_evidence() -> list[Evidence]:
     ]
 
 
+def build_investigation_timeline(
+    evidence: list[Evidence],
+    transcript_timeline: Optional[list[TimelineItem]] = None,
+    sub_intervals: Optional[list[TimelineItem]] = None,
+) -> list[TimelineItem]:
+    """Assemble a deterministic, chronological timeline from actual investigation evidence.
+
+    Rules:
+    - Suspicious evidence items with valid time_range (start >= 0, end >= start) produce timeline entries.
+    - Normal, inconclusive, or missing evidence items do NOT produce suspicious timeline entries.
+    - Informational transcript segments from Whisper are preserved.
+    - Timeline entries are sorted chronologically by start time.
+    """
+    timeline: list[TimelineItem] = []
+    seen: set[tuple[float, float, str]] = set()
+
+    def _is_valid_range(st: float, et: float) -> bool:
+        return (
+            not math.isnan(st)
+            and not math.isnan(et)
+            and not math.isinf(st)
+            and not math.isinf(et)
+            and st >= 0.0
+            and et >= st
+        )
+
+    def _add_item(start: float, end: float, label: str, severity: str):
+        try:
+            st = round(float(start), 2)
+            et = round(float(end), 2)
+        except (ValueError, TypeError):
+            return
+        if not _is_valid_range(st, et):
+            return
+        key = (st, et, label)
+        if key not in seen:
+            seen.add(key)
+            timeline.append(
+                TimelineItem(
+                    start=st,
+                    end=et,
+                    label=label,
+                    severity=severity,
+                )
+            )
+
+    # 1. Add fine-grained sub-intervals if present for suspicious evidence
+    if sub_intervals:
+        for sub in sub_intervals:
+            _add_item(sub.start, sub.end, sub.label, sub.severity)
+
+    # 2. Derive timeline items from suspicious Evidence objects
+    for ev in evidence:
+        if ev.status.lower() != "suspicious":
+            continue
+        if ev.time_range is None:
+            continue
+
+        try:
+            st = float(ev.time_range.start)
+            et = float(ev.time_range.end)
+        except (ValueError, TypeError):
+            continue
+
+        # Map label based on modality and signal
+        mod_lower = ev.modality.lower()
+        sig_lower = ev.signal.lower()
+
+        if mod_lower == "video" or "visual" in sig_lower:
+            lbl = "Visual synthetic signal"
+            sev = "high" if ev.score >= 0.70 else "medium"
+        elif mod_lower == "audio" or "voice" in sig_lower or "audio" in sig_lower:
+            lbl = "Synthetic voice signal"
+            sev = "high" if ev.score >= 0.70 else "medium"
+        elif mod_lower in ("audio_video", "sync") or "lip_sync" in sig_lower or "sync" in sig_lower:
+            lbl = "Audio-video synchronization anomaly"
+            sev = "high"
+        else:
+            lbl = f"Suspicious {ev.modality} signal"
+            sev = "high" if ev.score >= 0.70 else "medium"
+
+        _add_item(st, et, lbl, sev)
+
+    # 3. Add informational transcript segments (Whisper)
+    if transcript_timeline:
+        for t_item in transcript_timeline:
+            _add_item(t_item.start, t_item.end, t_item.label, t_item.severity)
+
+    # 4. Sort chronologically by start time, then end time
+    timeline.sort(key=lambda item: (item.start, item.end))
+    return timeline
+
+
 @router.post("/investigations", response_model=InvestigationResult)
 async def run_investigation(
     request: Request,
@@ -162,6 +255,8 @@ async def run_investigation(
 
     # Step 2: Evidence generation
     timeline: list[TimelineItem] = []
+    sub_intervals: list[TimelineItem] = []
+    transcript_timeline: list[TimelineItem] = []
 
     if video_ref is not None:
         # Step 16: Real ML Video Analysis via VideoDetector
@@ -190,10 +285,16 @@ async def run_investigation(
             t_range = None
             res_tr = video_result.get("time_range")
             if res_tr and isinstance(res_tr, dict) and "start" in res_tr and "end" in res_tr:
-                t_range = TimeRange(
-                    start=float(res_tr["start"]),
-                    end=float(res_tr["end"]),
-                )
+                try:
+                    tr_s = float(res_tr["start"])
+                    tr_e = float(res_tr["end"])
+                    if not math.isnan(tr_s) and not math.isnan(tr_e) and tr_s >= 0 and tr_e >= tr_s:
+                        t_range = TimeRange(
+                            start=round(tr_s, 2),
+                            end=round(tr_e, 2),
+                        )
+                except (ValueError, TypeError):
+                    t_range = None
 
             video_evidence = Evidence(
                 modality="video",
@@ -204,6 +305,25 @@ async def run_investigation(
                 time_range=t_range,
             )
             evidence.append(video_evidence)
+
+            # Collect fine-grained suspicious video intervals if present
+            if status == "suspicious" and video_result.get("suspicious_intervals"):
+                for iv in video_result["suspicious_intervals"]:
+                    if isinstance(iv, dict) and "start" in iv and "end" in iv:
+                        try:
+                            iv_s = float(iv["start"])
+                            iv_e = float(iv["end"])
+                            if not math.isnan(iv_s) and not math.isnan(iv_e) and iv_s >= 0 and iv_e >= iv_s:
+                                sub_intervals.append(
+                                    TimelineItem(
+                                        start=round(iv_s, 2),
+                                        end=round(iv_e, 2),
+                                        label="Visual synthetic signal",
+                                        severity="high" if raw_score >= 0.70 else "medium",
+                                    )
+                                )
+                        except (ValueError, TypeError):
+                            pass
 
         # Real Audio ML Analysis via run_audio_pipeline (Step 17 AASIST + Step 18 Whisper + Step 19 SyncNet)
         try:
@@ -303,30 +423,24 @@ async def run_investigation(
                 )
                 evidence.append(audio_evidence)
 
-                # Timeline generation for suspicious audio segments
-                if isinstance(raw_tr, list) and audio_status == "suspicious":
+                # Collect sub-intervals for suspicious audio segments
+                if audio_status == "suspicious" and isinstance(raw_tr, list):
                     for tr_item in raw_tr:
                         if isinstance(tr_item, dict) and "start" in tr_item and "end" in tr_item:
                             try:
-                                timeline.append(
-                                    TimelineItem(
-                                        start=float(tr_item["start"]),
-                                        end=float(tr_item["end"]),
-                                        label="Detected synthetic speech segment",
-                                        severity="high" if bounded_score >= 0.7 else "medium",
+                                a_s = float(tr_item["start"])
+                                a_e = float(tr_item["end"])
+                                if not math.isnan(a_s) and not math.isnan(a_e) and a_s >= 0 and a_e >= a_s:
+                                    sub_intervals.append(
+                                        TimelineItem(
+                                            start=round(a_s, 2),
+                                            end=round(a_e, 2),
+                                            label="Synthetic voice signal",
+                                            severity="high" if bounded_score >= 0.70 else "medium",
+                                        )
                                     )
-                                )
                             except (ValueError, TypeError):
                                 pass
-                elif audio_time_range and audio_status == "suspicious":
-                    timeline.append(
-                        TimelineItem(
-                            start=audio_time_range.start,
-                            end=audio_time_range.end,
-                            label="Detected synthetic speech segment",
-                            severity="high" if bounded_score >= 0.7 else "medium",
-                        )
-                    )
 
         # Step 18: Real faster-whisper Speech Transcription integration
         try:
@@ -411,7 +525,7 @@ async def run_investigation(
                                 if len(text_val) > 60
                                 else (f"Speech transcript: {text_val}" if text_val else "Speech transcript segment")
                             )
-                            timeline.append(
+                            transcript_timeline.append(
                                 TimelineItem(
                                     start=round(start_t, 2),
                                     end=round(end_t, 2),
@@ -519,7 +633,7 @@ async def run_investigation(
                             # Append suspicious timeline entries only if synchronization is suspicious
                             if sync_status == "suspicious" and valid_ranges:
                                 for st, et in valid_ranges:
-                                    timeline.append(
+                                    sub_intervals.append(
                                         TimelineItem(
                                             start=round(st, 2),
                                             end=round(et, 2),
@@ -531,27 +645,12 @@ async def run_investigation(
             # Safe degradation: SyncNet errors must not break investigation
             pass
 
-        # Timeline generation from video intervals if available
-        if video_result and video_result.get("suspicious_intervals"):
-            for iv in video_result["suspicious_intervals"]:
-                timeline.append(
-                    TimelineItem(
-                        start=float(iv["start"]),
-                        end=float(iv["end"]),
-                        label="Detected visual manipulation",
-                        severity="high",
-                    )
-                )
-        elif video_result and video_result.get("time_range"):
-            tr = video_result["time_range"]
-            timeline.append(
-                TimelineItem(
-                    start=float(tr["start"]),
-                    end=float(tr["end"]),
-                    label="Detected visual anomaly",
-                    severity="medium",
-                )
-            )
+        # Step 2b: Assemble deterministic, evidence-driven timeline
+        timeline = build_investigation_timeline(
+            evidence=evidence,
+            transcript_timeline=transcript_timeline,
+            sub_intervals=sub_intervals,
+        )
     else:
         # Backward-compatible fallback for no-file requests
         evidence = create_mock_evidence()
@@ -611,6 +710,7 @@ __all__ = [
     "TimeRange",
     "Verdict",
     "VideoDetector",
+    "build_investigation_timeline",
     "create_mock_evidence",
     "router",
     "run_audio_pipeline",
