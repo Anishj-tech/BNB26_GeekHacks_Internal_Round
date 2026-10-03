@@ -11,6 +11,7 @@ API request (with optional video upload)
     -> InvestigationResult
 """
 
+import math
 import os
 import tempfile
 import uuid
@@ -204,16 +205,24 @@ async def run_investigation(
             )
             evidence.append(video_evidence)
 
-        # Step 17: Real AASIST Audio Spoof Detection via run_audio_pipeline
+        # Real Audio ML Analysis via run_audio_pipeline (Step 17 AASIST + Step 18 Whisper)
         try:
             audio_pipeline_result = run_audio_pipeline(video_path=video_ref)
-            audio_info = (
-                audio_pipeline_result.get("audio", {})
-                if isinstance(audio_pipeline_result, dict)
-                else {}
-            )
+            if not isinstance(audio_pipeline_result, dict):
+                audio_pipeline_result = {}
         except Exception:
-            audio_info = {}
+            audio_pipeline_result = {}
+
+        audio_info = (
+            audio_pipeline_result.get("audio", {})
+            if isinstance(audio_pipeline_result, dict)
+            else {}
+        )
+        transcription_info = (
+            audio_pipeline_result.get("transcription", {})
+            if isinstance(audio_pipeline_result, dict)
+            else {}
+        )
 
         # Safe-degradation rule: If synthetic_score is None or status is unavailable/error/insufficient:
         # - Do NOT fabricate a score.
@@ -313,6 +322,101 @@ async def run_investigation(
                             severity="high" if bounded_score >= 0.7 else "medium",
                         )
                     )
+
+        # Step 18: Real faster-whisper Speech Transcription integration
+        try:
+            if isinstance(transcription_info, dict):
+                raw_trans_status = str(transcription_info.get("status", "")).lower().strip()
+                if raw_trans_status not in ["unavailable", "error", "failed"]:
+                    raw_text = str(transcription_info.get("text", "")).strip()
+                    raw_segments = transcription_info.get("segments") or []
+
+                    # Extract valid segments and calculate word-level confidence if available
+                    valid_segments: list[tuple[float, float, str]] = []
+                    word_probs: list[float] = []
+
+                    if isinstance(raw_segments, list):
+                        for seg in raw_segments:
+                            if not isinstance(seg, dict):
+                                continue
+                            try:
+                                seg_start = float(seg["start"])
+                                seg_end = float(seg["end"])
+                                if (
+                                    math.isnan(seg_start)
+                                    or math.isnan(seg_end)
+                                    or seg_start < 0
+                                    or seg_end < seg_start
+                                ):
+                                    continue
+                                seg_text = str(seg.get("text", "")).strip()
+                                valid_segments.append((seg_start, seg_end, seg_text))
+
+                                # Collect word probabilities if present
+                                words = seg.get("words")
+                                if isinstance(words, list):
+                                    for w in words:
+                                        if isinstance(w, dict):
+                                            p = w.get("probability")
+                                            if p is None:
+                                                p = w.get("prob")
+                                            if p is not None:
+                                                wp = float(p)
+                                                if not math.isnan(wp):
+                                                    word_probs.append(wp)
+                                elif "probability" in seg and seg["probability"] is not None:
+                                    sp = float(seg["probability"])
+                                    if not math.isnan(sp):
+                                        word_probs.append(sp)
+                            except (ValueError, TypeError, KeyError):
+                                continue
+
+                    # Create text Evidence if usable text or valid segments exist
+                    has_usable_content = bool(raw_text or valid_segments)
+                    if has_usable_content:
+                        if word_probs:
+                            avg_prob = sum(word_probs) / len(word_probs)
+                            transcript_conf = round(max(0.0, min(1.0, float(avg_prob))), 4)
+                        elif transcription_info.get("confidence") is not None:
+                            try:
+                                transcript_conf = round(
+                                    max(0.0, min(1.0, float(transcription_info["confidence"]))),
+                                    4,
+                                )
+                            except (ValueError, TypeError):
+                                transcript_conf = 0.50
+                        else:
+                            transcript_conf = 0.50
+
+                        evidence.append(
+                            Evidence(
+                                modality="text",
+                                signal="speech_transcript",
+                                score=0.50,
+                                confidence=transcript_conf,
+                                status="normal",
+                                time_range=None,
+                            )
+                        )
+
+                        # Append neutral timeline entries for valid speech segments
+                        for start_t, end_t, text_val in valid_segments:
+                            lbl = (
+                                f"Speech transcript: {text_val[:60]}..."
+                                if len(text_val) > 60
+                                else (f"Speech transcript: {text_val}" if text_val else "Speech transcript segment")
+                            )
+                            timeline.append(
+                                TimelineItem(
+                                    start=round(start_t, 2),
+                                    end=round(end_t, 2),
+                                    label=lbl,
+                                    severity="info",
+                                )
+                            )
+        except Exception:
+            # Safe degradation: transcription errors must not break investigation
+            pass
 
         # Timeline generation from video intervals if available
         if video_result and video_result.get("suspicious_intervals"):
