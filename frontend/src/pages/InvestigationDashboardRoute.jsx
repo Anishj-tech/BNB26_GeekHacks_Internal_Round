@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import {
   ArrowRight,
   ChevronDown,
+  PlusCircle,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 import { useRouter } from '../router';
 import { TrustLayerShell } from '../components/shell/TrustLayerShell';
@@ -9,6 +12,10 @@ import { Badge } from '../design-system/components/Badge';
 import { Button } from '../design-system/components/Button';
 import { TrustAssessment } from '../components/forensic/TrustAssessment';
 import { TrustAxes } from '../components/forensic/TrustAxes';
+import { SyntheticSignalsPanel } from '../components/forensic/SyntheticSignalsPanel';
+import { ConsistencyPanel } from '../components/forensic/ConsistencyPanel';
+import { AssessmentExplanation } from '../components/forensic/AssessmentExplanation';
+import { EvidenceDetailDrawer } from '../components/forensic/EvidenceDetailDrawer';
 import { EvidenceCoverage } from '../components/forensic/EvidenceCoverage';
 import { ConflictPanel } from '../components/forensic/ConflictPanel';
 import { VideoEvidence } from '../components/forensic/VideoEvidence';
@@ -24,6 +31,7 @@ export const InvestigationDashboardRoute = () => {
   const [allCases, setAllCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedEvidenceDrawer, setSelectedEvidenceDrawer] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -82,6 +90,52 @@ export const InvestigationDashboardRoute = () => {
       ]}
       maxWidth="1200px"
     >
+      {/* PHASE 4 HEADER PROGRESS BAR */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          padding: '12px 18px',
+          backgroundColor: 'var(--tl-surface-card)',
+          border: '1px solid var(--tl-hairline)',
+          borderRadius: 'var(--tl-radius-md)',
+          marginBottom: '20px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontFamily: 'var(--tl-font-mono)', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--tl-primary)', letterSpacing: '0.08em' }}>
+            TRUSTLAYER FORENSICS
+          </span>
+          <span style={{ color: 'var(--tl-hairline)' }}>•</span>
+          <span style={{ fontFamily: 'var(--tl-font-mono)', fontSize: '0.6875rem', color: 'var(--tl-body)' }}>
+            INVESTIGATION / RESULTS
+          </span>
+          <span style={{ color: 'var(--tl-hairline)' }}>•</span>
+          <Badge variant="match" size="xs">ANALYSIS COMPLETED</Badge>
+        </div>
+
+        {/* Progress: 01 Upload ✓  02 Analyze ✓  03 Results ● */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontFamily: 'var(--tl-font-mono)', fontSize: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--tl-success)' }}>
+            <span>01 Upload</span>
+            <CheckCircle2 size={13} />
+          </div>
+          <span style={{ color: 'var(--tl-hairline)' }}>→</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--tl-success)' }}>
+            <span>02 Analyze</span>
+            <CheckCircle2 size={13} />
+          </div>
+          <span style={{ color: 'var(--tl-hairline)' }}>→</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--tl-primary)', fontWeight: 600 }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--tl-primary)' }} />
+            <span>03 Results</span>
+          </div>
+        </div>
+      </div>
+
       {/* 1. TOP CASE CONTEXT & QUICK SWITCHER */}
       <div
         style={{
@@ -159,7 +213,7 @@ export const InvestigationDashboardRoute = () => {
         </div>
 
         {/* Action Controls & Case Switcher */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
           {/* Quick Case Switcher */}
           <div style={{ position: 'relative' }}>
             <select
@@ -195,6 +249,27 @@ export const InvestigationDashboardRoute = () => {
           </div>
 
           <Button
+            variant="primary"
+            size="sm"
+            icon={PlusCircle}
+            onClick={() => navigate('/investigation/new')}
+          >
+            New Investigation
+          </Button>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={RefreshCw}
+            onClick={() => {
+              setLoading(true);
+              setTimeout(() => setLoading(false), 500);
+            }}
+          >
+            Re-run Analysis
+          </Button>
+
+          <Button
             variant="secondary"
             size="sm"
             onClick={() => navigate(`/investigation/${investigation.id}/evidence`)}
@@ -222,13 +297,31 @@ export const InvestigationDashboardRoute = () => {
         quadrant={investigation.twoAxis?.quadrant}
       />
 
-      {/* 4. CONFLICT ANALYSIS PANEL (FIRST-CLASS FORENSIC SIGNAL) */}
+      {/* 4. ASSESSMENT EXPLANATION & EXPLICIT UNCERTAINTY (PHASE 6.1 & 6.3) */}
+      <AssessmentExplanation
+        investigation={investigation}
+        onOpenEvidenceDetail={(item) => setSelectedEvidenceDrawer(item)}
+      />
+
+      {/* 5. SYNTHETIC SIGNALS PANEL (DEDICATED SECTION) */}
+      <SyntheticSignalsPanel
+        syntheticScore={investigation.assessment.syntheticScore}
+        syntheticLabel={investigation.assessment.syntheticLabel}
+        evidenceList={investigation.evidenceList}
+        videoAnalysis={investigation.videoAnalysis}
+        onOpenEvidenceDetail={(item) => setSelectedEvidenceDrawer(item)}
+      />
+
+      {/* 5. CROSS-MODAL CONSISTENCY PANEL */}
+      <ConsistencyPanel consistencyNetwork={investigation.consistencyNetwork} />
+
+      {/* 6. CONFLICT ANALYSIS PANEL (FIRST-CLASS FORENSIC SIGNAL) */}
       <ConflictPanel conflict={investigation.conflict} />
 
-      {/* 5. EVIDENCE COVERAGE & AUDIT */}
+      {/* 7. EVIDENCE COVERAGE & AUDIT */}
       <EvidenceCoverage coverage={investigation.coverage} />
 
-      {/* 6. VIDEO FORENSICS & KEYFRAME SCRUBBER */}
+      {/* 8. VIDEO FORENSICS & KEYFRAME SCRUBBER */}
       {investigation.videoAnalysis && (
         <VideoEvidence
           videoAnalysis={investigation.videoAnalysis}
@@ -305,6 +398,13 @@ export const InvestigationDashboardRoute = () => {
           <ArrowRight size={18} color="var(--tl-primary)" style={{ flexShrink: 0, marginLeft: '16px' }} />
         </div>
       </div>
+
+      {/* REUSABLE EVIDENCE DETAIL DRAWER (ACCESSIBLE ACROSS ALL SECTIONS) */}
+      <EvidenceDetailDrawer
+        isOpen={Boolean(selectedEvidenceDrawer)}
+        evidence={selectedEvidenceDrawer}
+        onClose={() => setSelectedEvidenceDrawer(null)}
+      />
     </TrustLayerShell>
   );
 };

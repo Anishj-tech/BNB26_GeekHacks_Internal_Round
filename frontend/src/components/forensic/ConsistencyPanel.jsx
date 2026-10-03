@@ -71,11 +71,27 @@ export const ConsistencyPanel = ({ consistencyNetwork = [] }) => {
           color: 'var(--tl-body)',
           maxWidth: '780px',
           lineHeight: 1.55,
-          marginBottom: '24px',
+          marginBottom: '16px',
         }}
       >
         Authentic recordings exhibit physical congruence across modalities: mouth movement tracks audio phonemes, reverberation matches room geometry, and transcripts reflect audible speech. Divergences expose generative tampering.
       </p>
+
+      {/* Forensic Insight Banner: Why axes differ */}
+      <div
+        style={{
+          padding: '12px 16px',
+          backgroundColor: 'var(--tl-surface-card)',
+          borderLeft: '3px solid var(--tl-primary)',
+          borderRadius: 'var(--tl-radius-xs)',
+          marginBottom: '24px',
+          fontSize: '0.8125rem',
+          lineHeight: 1.5,
+          color: 'var(--tl-ink)',
+        }}
+      >
+        <strong>Why Synthetic and Consistency Axes Differ:</strong> A video can be completely pristine (0% synthetic traces) but completely out-of-context or spliced with an external voice clone (100% cross-modal conflict). Conversely, heavy compression can create false visual artifacts while cross-modal audio-visual synchronization remains perfectly intact.
+      </div>
 
       {/* Relationships Table / Cards */}
       <div

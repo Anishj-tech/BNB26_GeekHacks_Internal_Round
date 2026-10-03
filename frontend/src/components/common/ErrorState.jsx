@@ -4,8 +4,13 @@ import { Button } from '../../design-system/components/Button';
 export const ErrorState = ({
   title = 'Forensic Inspection Failed',
   message = 'An unexpected error occurred while parsing the evidence streams.',
+  actionLabel,
+  onAction,
   onRetry,
 }) => {
+  const handleAction = onAction || onRetry;
+  const label = actionLabel || (onRetry ? 'Retry Operation' : 'Back to Safety');
+
   return (
     <div
       style={{
@@ -55,9 +60,9 @@ export const ErrorState = ({
       >
         {message}
       </p>
-      {onRetry && (
-        <Button variant="secondary" size="md" icon={RotateCw} onClick={onRetry}>
-          Retry Operation
+      {handleAction && (
+        <Button variant="secondary" size="md" icon={RotateCw} onClick={handleAction}>
+          {label}
         </Button>
       )}
     </div>

@@ -199,19 +199,29 @@ export const TrustAssessment = ({ assessment }) => {
             marginBottom: '28px',
           }}
         >
-          <span
-            style={{
-              fontFamily: 'var(--tl-font-mono)',
-              fontSize: '0.6875rem',
-              color: 'var(--tl-primary)',
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              display: 'block',
-              marginBottom: '4px',
-            }}
-          >
-            CONFIDENCE & EVIDENCE INTEGRITY NOTE
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span
+              style={{
+                fontFamily: 'var(--tl-font-mono)',
+                fontSize: '0.6875rem',
+                color: 'var(--tl-primary)',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                display: 'block',
+              }}
+            >
+              CONFIDENCE & EVIDENCE INTEGRITY NOTE
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--tl-font-mono)',
+                fontSize: '0.625rem',
+                color: 'var(--tl-on-dark-soft)',
+              }}
+            >
+              Deterministic Evidence Fusion • Non-LLM Verdict
+            </span>
+          </div>
           <p
             style={{
               fontFamily: 'var(--tl-font-sans)',

@@ -14,6 +14,8 @@ import { Button } from '../design-system/components/Button';
 import { Badge } from '../design-system/components/Badge';
 import { EvidenceCard } from '../components/forensic/EvidenceCard';
 import { ConsistencyPanel } from '../components/forensic/ConsistencyPanel';
+import { EvidenceGraph } from '../components/forensic/EvidenceGraph';
+import { EvidenceDetailDrawer } from '../components/forensic/EvidenceDetailDrawer';
 import { LoadingState } from '../components/common/LoadingState';
 import { ErrorState } from '../components/common/ErrorState';
 import { investigationService } from '../services/investigationService';
@@ -29,6 +31,7 @@ export const EvidenceExplorerRoute = () => {
   // Filters
   const [selectedModality, setSelectedModality] = useState('ALL');
   const [selectedDirection, setSelectedDirection] = useState('ALL');
+  const [selectedEvidenceDrawer, setSelectedEvidenceDrawer] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -159,7 +162,13 @@ export const EvidenceExplorerRoute = () => {
         </p>
       </div>
 
-      {/* 2. FILTER STRIP */}
+      {/* 2. INTERACTIVE EVIDENCE GRAPH (PHASE 5.1) */}
+      <EvidenceGraph
+        investigation={investigation}
+        onNodeClick={(item) => setSelectedEvidenceDrawer(item)}
+      />
+
+      {/* 3. FILTER STRIP */}
       <div
         style={{
           backgroundColor: 'var(--tl-surface-card)',
@@ -250,7 +259,11 @@ export const EvidenceExplorerRoute = () => {
         {primaryEvidence.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {primaryEvidence.map((ev) => (
-              <EvidenceCard key={ev.id} evidence={ev} />
+              <EvidenceCard
+                key={ev.id}
+                evidence={ev}
+                onClick={() => setSelectedEvidenceDrawer(ev)}
+              />
             ))}
           </div>
         ) : (
@@ -314,7 +327,11 @@ export const EvidenceExplorerRoute = () => {
         {supportingEvidence.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {supportingEvidence.map((ev) => (
-              <EvidenceCard key={ev.id} evidence={ev} />
+              <EvidenceCard
+                key={ev.id}
+                evidence={ev}
+                onClick={() => setSelectedEvidenceDrawer(ev)}
+              />
             ))}
           </div>
         ) : (
@@ -339,6 +356,13 @@ export const EvidenceExplorerRoute = () => {
       {investigation.consistencyNetwork && (
         <ConsistencyPanel consistencyNetwork={investigation.consistencyNetwork} />
       )}
+
+      {/* REUSABLE EVIDENCE DETAIL DRAWER */}
+      <EvidenceDetailDrawer
+        isOpen={Boolean(selectedEvidenceDrawer)}
+        evidence={selectedEvidenceDrawer}
+        onClose={() => setSelectedEvidenceDrawer(null)}
+      />
     </TrustLayerShell>
   );
 };

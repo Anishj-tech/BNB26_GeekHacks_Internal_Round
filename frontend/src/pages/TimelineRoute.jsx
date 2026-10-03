@@ -9,6 +9,8 @@ import { TrustLayerShell } from '../components/shell/TrustLayerShell';
 import { Button } from '../design-system/components/Button';
 import { Badge } from '../design-system/components/Badge';
 import { Timeline } from '../components/forensic/Timeline';
+import { SuspiciousTimeline } from '../components/forensic/SuspiciousTimeline';
+import { EvidenceDetailDrawer } from '../components/forensic/EvidenceDetailDrawer';
 import { LoadingState } from '../components/common/LoadingState';
 import { ErrorState } from '../components/common/ErrorState';
 import { investigationService } from '../services/investigationService';
@@ -21,6 +23,7 @@ export const TimelineRoute = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
+  const [selectedRegionDrawer, setSelectedRegionDrawer] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -127,7 +130,15 @@ export const TimelineRoute = () => {
         </p>
       </div>
 
-      {/* 2. TEMPORAL INTERVAL SCRUBBER (DARK PRODUCT SURFACE) */}
+      {/* 2. SUSPICIOUS TIMELINE (PHASE 5.2) */}
+      <SuspiciousTimeline
+        duration={investigation.duration}
+        suspiciousIntervals={suspiciousIntervals}
+        representativeFrames={representativeFrames}
+        onSelectRegion={(item) => setSelectedRegionDrawer(item)}
+      />
+
+      {/* 3. TEMPORAL INTERVAL SCRUBBER (DARK PRODUCT SURFACE) */}
       <section
         style={{
           backgroundColor: 'var(--tl-surface-dark)',
@@ -360,6 +371,13 @@ export const TimelineRoute = () => {
 
       {/* 4. AUDITABLE PIPELINE TIMELINE COMPONENT */}
       <Timeline timelineEvents={investigation.timeline || []} />
+
+      {/* REUSABLE EVIDENCE DETAIL DRAWER */}
+      <EvidenceDetailDrawer
+        isOpen={Boolean(selectedRegionDrawer)}
+        evidence={selectedRegionDrawer}
+        onClose={() => setSelectedRegionDrawer(null)}
+      />
     </TrustLayerShell>
   );
 };

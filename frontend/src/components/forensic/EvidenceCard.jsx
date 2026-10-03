@@ -1,7 +1,7 @@
 import { Video, Mic, FileText, Crosshair, UserCheck, AlertCircle, Clock, ShieldCheck, ShieldAlert, HelpCircle } from 'lucide-react';
 import { Badge } from '../../design-system/components/Badge';
 
-export const EvidenceCard = ({ evidence }) => {
+export const EvidenceCard = ({ evidence, onClick }) => {
   if (!evidence) return null;
 
   const {
@@ -58,6 +58,7 @@ export const EvidenceCard = ({ evidence }) => {
 
   return (
     <div
+      onClick={onClick}
       style={{
         backgroundColor: 'var(--tl-canvas)',
         border: `1px solid ${isSupporting ? 'var(--tl-hairline)' : 'var(--tl-hairline)'}`,
@@ -67,10 +68,11 @@ export const EvidenceCard = ({ evidence }) => {
         display: 'flex',
         flexDirection: 'column',
         gap: '14px',
-        transition: 'border-color 140ms ease, box-shadow 140ms ease',
+        transition: 'border-color 140ms ease, box-shadow 140ms ease, transform 120ms ease',
         boxShadow: '0 1px 3px rgba(20, 20, 19, 0.04)',
+        cursor: onClick ? 'pointer' : 'default',
       }}
-      className="tl-evidence-card"
+      className="tl-evidence-card tl-hover-card"
     >
       {/* Top Metadata Bar */}
       <div

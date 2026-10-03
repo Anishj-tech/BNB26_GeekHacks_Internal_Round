@@ -13,7 +13,7 @@ import { useRouter } from '../router';
 import { TrustLayerShell } from '../components/shell/TrustLayerShell';
 import { Button } from '../design-system/components/Button';
 import { Badge } from '../design-system/components/Badge';
-import { ProcessingPipeline } from '../components/forensic/ProcessingPipeline';
+import { AnalysisProcessingView } from '../components/forensic/AnalysisProcessingView';
 import { investigationService } from '../services/investigationService';
 
 export const InvestigationNewRoute = () => {
@@ -27,12 +27,7 @@ export const InvestigationNewRoute = () => {
 
   // Pipeline execution state
   const [isProcessing, setIsProcessing] = useState(false);
-  const [pipelineState, setPipelineState] = useState({
-    stageIndex: 0,
-    stageName: 'VALIDATING',
-    note: 'Validating media container and computing cryptographic hash',
-    percent: 15,
-  });
+  const [targetInvestigationId, setTargetInvestigationId] = useState(null);
 
   // Sample Presets for instantaneous testing
   const presets = [
@@ -91,20 +86,32 @@ export const InvestigationNewRoute = () => {
         videoFile,
         audioFile,
         transcriptText,
-        onProgress: (progress) => {
-          setPipelineState(progress);
-        },
       });
 
-      // Brief delay to allow final stage to settle
-      setTimeout(() => {
-        navigate(`/investigation/${newInvestigation.id}`);
-      }, 400);
+      setTargetInvestigationId(newInvestigation.id);
     } catch (err) {
       console.error('Failed to create investigation:', err);
       setIsProcessing(false);
     }
   };
+
+  if (isProcessing) {
+    return (
+      <AnalysisProcessingView
+        evidenceReference={{
+          filename: videoFile?.name || 'uploaded_evidence.mp4',
+          size: videoFile ? `${(videoFile.size / (1024 * 1024)).toFixed(1)} MB` : '14.2 MB',
+          type: videoFile?.type || 'video/mp4',
+          hash: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+        }}
+        hasAudio={Boolean(audioFile)}
+        hasTranscript={Boolean(transcriptText?.trim())}
+        onComplete={() => {
+          navigate(`/investigation/${targetInvestigationId || 'INV-2026-001'}`);
+        }}
+      />
+    );
+  }
 
   return (
     <TrustLayerShell
@@ -115,31 +122,6 @@ export const InvestigationNewRoute = () => {
       ]}
       maxWidth="1180px"
     >
-      {/* PROCESSING MODAL OVERLAY */}
-      {isProcessing && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(20, 20, 19, 0.75)',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            zIndex: 100,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '24px',
-          }}
-        >
-          <ProcessingPipeline
-            currentStageIndex={pipelineState.stageIndex}
-            stageName={pipelineState.stageName}
-            note={pipelineState.note}
-            percent={pipelineState.percent}
-          />
-        </div>
-      )}
-
       {/* HEADER SECTION */}
       <div style={{ marginBottom: '32px' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
