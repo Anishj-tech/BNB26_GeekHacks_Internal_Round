@@ -33,6 +33,7 @@ try:
     from backend.explanation.gemini import GeminiExplanationService
     from backend.preprocessing.video import PreprocessingService
     from backend.models.video_detector import VideoDetector
+    from backend.analysis.audio.pipeline import run_audio_pipeline
 except ImportError:
     from analysis.evidence import (
         Assessment,
@@ -48,6 +49,7 @@ except ImportError:
     from explanation.gemini import GeminiExplanationService
     from preprocessing.video import PreprocessingService
     from models.video_detector import VideoDetector
+    from analysis.audio.pipeline import run_audio_pipeline
 
 
 router = APIRouter(tags=["investigation"])
@@ -202,27 +204,115 @@ async def run_investigation(
             )
             evidence.append(video_evidence)
 
-        # Preserve existing audio and text mock evidence for Step 16
-        evidence.extend(
-            [
-                Evidence(
+        # Step 17: Real AASIST Audio Spoof Detection via run_audio_pipeline
+        try:
+            audio_pipeline_result = run_audio_pipeline(video_path=video_ref)
+            audio_info = (
+                audio_pipeline_result.get("audio", {})
+                if isinstance(audio_pipeline_result, dict)
+                else {}
+            )
+        except Exception:
+            audio_info = {}
+
+        # Safe-degradation rule: If synthetic_score is None or status is unavailable/error/insufficient:
+        # - Do NOT fabricate a score.
+        # - Do NOT create invalid Evidence.
+        # - Do NOT treat missing audio evidence as authentic.
+        # - Simply omit the audio Evidence item.
+        if audio_info and audio_info.get("synthetic_score") is not None:
+            raw_audio_status = str(audio_info.get("status", "")).lower().strip()
+            if raw_audio_status not in ["unavailable", "error"]:
+                raw_score = float(audio_info["synthetic_score"])
+                bounded_score = max(0.0, min(1.0, raw_score))
+
+                raw_confidence = audio_info.get("confidence")
+                if raw_confidence is not None:
+                    confidence = max(0.0, min(1.0, float(raw_confidence)))
+                else:
+                    confidence = max(0.0, min(1.0, abs(bounded_score - 0.5) * 2))
+
+                # Status mapping according to AASIST semantics:
+                # - "suspicious" if audio status indicates suspicious/synthetic or synthetic_score >= 0.5
+                # - "normal" if normal/authentic/genuine or synthetic_score < 0.5
+                # - "inconclusive" if unavailable/partial/error/inconclusive
+                if raw_audio_status in ["suspicious", "synthetic"]:
+                    audio_status = "suspicious"
+                elif raw_audio_status in ["normal", "authentic", "genuine", "bonafide"]:
+                    audio_status = "normal"
+                elif raw_audio_status in ["inconclusive", "partial"]:
+                    audio_status = "inconclusive"
+                else:
+                    # AASIST decision threshold is 0.5 (backend/analysis/audio/spoof_detection.py)
+                    audio_status = "suspicious" if bounded_score >= 0.5 else "normal"
+
+                # Time range mapping
+                audio_time_range = None
+                raw_tr = audio_info.get("time_ranges")
+                if isinstance(raw_tr, list) and len(raw_tr) > 0:
+                    first_tr = raw_tr[0]
+                    if isinstance(first_tr, dict) and "start" in first_tr and "end" in first_tr:
+                        try:
+                            audio_time_range = TimeRange(
+                                start=float(first_tr["start"]),
+                                end=float(first_tr["end"]),
+                            )
+                        except (ValueError, TypeError):
+                            audio_time_range = None
+                elif isinstance(raw_tr, dict) and "start" in raw_tr and "end" in raw_tr:
+                    try:
+                        audio_time_range = TimeRange(
+                            start=float(raw_tr["start"]),
+                            end=float(raw_tr["end"]),
+                        )
+                    except (ValueError, TypeError):
+                        audio_time_range = None
+
+                if audio_time_range is None and isinstance(audio_info.get("time_range"), dict):
+                    sing_tr = audio_info["time_range"]
+                    if "start" in sing_tr and "end" in sing_tr:
+                        try:
+                            audio_time_range = TimeRange(
+                                start=float(sing_tr["start"]),
+                                end=float(sing_tr["end"]),
+                            )
+                        except (ValueError, TypeError):
+                            audio_time_range = None
+
+                audio_evidence = Evidence(
                     modality="audio",
                     signal="synthetic_voice",
-                    score=0.85,
-                    confidence=0.90,
-                    status="suspicious",
-                    time_range=TimeRange(start=1.0, end=4.0),
-                ),
-                Evidence(
-                    modality="text",
-                    signal="semantic_coherence",
-                    score=0.78,
-                    confidence=0.80,
-                    status="suspicious",
-                    time_range=None,
-                ),
-            ]
-        )
+                    score=bounded_score,
+                    confidence=confidence,
+                    status=audio_status,
+                    time_range=audio_time_range,
+                )
+                evidence.append(audio_evidence)
+
+                # Timeline generation for suspicious audio segments
+                if isinstance(raw_tr, list) and audio_status == "suspicious":
+                    for tr_item in raw_tr:
+                        if isinstance(tr_item, dict) and "start" in tr_item and "end" in tr_item:
+                            try:
+                                timeline.append(
+                                    TimelineItem(
+                                        start=float(tr_item["start"]),
+                                        end=float(tr_item["end"]),
+                                        label="Detected synthetic speech segment",
+                                        severity="high" if bounded_score >= 0.7 else "medium",
+                                    )
+                                )
+                            except (ValueError, TypeError):
+                                pass
+                elif audio_time_range and audio_status == "suspicious":
+                    timeline.append(
+                        TimelineItem(
+                            start=audio_time_range.start,
+                            end=audio_time_range.end,
+                            label="Detected synthetic speech segment",
+                            severity="high" if bounded_score >= 0.7 else "medium",
+                        )
+                    )
 
         # Timeline generation from video intervals if available
         if video_result and video_result.get("suspicious_intervals"):
@@ -302,4 +392,5 @@ __all__ = [
     "VideoDetector",
     "create_mock_evidence",
     "router",
+    "run_audio_pipeline",
 ]
