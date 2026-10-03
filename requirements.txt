@@ -5,3 +5,13 @@ faster-whisper>=1.0.0
 opencv-python-headless>=4.8.0
 scipy>=1.10.0
 python_speech_features>=0.6
+# TrustLayer - Video / Visual ML Module Dependencies
+# (Member 1 scope: Video Preprocessing, Frame Sampling, Visual Detector, Face Consistency)
+
+opencv-python>=4.8.0
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.35.0
+Pillow>=9.5.0
+numpy>=1.24.0
+pytest>=7.0.0
