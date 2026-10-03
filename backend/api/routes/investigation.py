@@ -21,6 +21,7 @@ try:
     from backend.analysis.consistency import ConsistencyAnalyzer
     from backend.analysis.conflict import ConflictDetector
     from backend.fusion.trust_engine import TrustEngine
+    from backend.explanation.gemini import GeminiExplanationService
 except ImportError:
     from analysis.evidence import (
         Assessment,
@@ -33,6 +34,7 @@ except ImportError:
     from analysis.consistency import ConsistencyAnalyzer
     from analysis.conflict import ConflictDetector
     from fusion.trust_engine import TrustEngine
+    from explanation.gemini import GeminiExplanationService
 
 
 router = APIRouter(tags=["investigation"])
@@ -116,11 +118,12 @@ def run_investigation(
         )
     ]
 
-    # Step 6: Deterministic explanation placeholder incorporating pipeline findings
-    conflict_note = " Conflicting forensic evidence detected." if conflict_detected else ""
-    explanation = (
-        f"Multi-modal forensic analysis completed.{conflict_note} Coordinated synthetic indicators "
-        f"detected across video, audio, and text modalities. Verdict: {assessment.verdict}."
+    # Step 6: Generate explanation via Gemini (with deterministic fallback)
+    explanation_service = GeminiExplanationService()
+    explanation = explanation_service.generate_explanation(
+        assessment=assessment,
+        evidence=evidence,
+        timeline=timeline,
     )
 
     return InvestigationResult(
@@ -135,6 +138,7 @@ def run_investigation(
 __all__ = [
     "Assessment",
     "Evidence",
+    "GeminiExplanationService",
     "InvestigationRequest",
     "InvestigationResult",
     "TimelineItem",
