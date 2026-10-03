@@ -205,7 +205,7 @@ async def run_investigation(
             )
             evidence.append(video_evidence)
 
-        # Real Audio ML Analysis via run_audio_pipeline (Step 17 AASIST + Step 18 Whisper)
+        # Real Audio ML Analysis via run_audio_pipeline (Step 17 AASIST + Step 18 Whisper + Step 19 SyncNet)
         try:
             audio_pipeline_result = run_audio_pipeline(video_path=video_ref)
             if not isinstance(audio_pipeline_result, dict):
@@ -220,6 +220,11 @@ async def run_investigation(
         )
         transcription_info = (
             audio_pipeline_result.get("transcription", {})
+            if isinstance(audio_pipeline_result, dict)
+            else {}
+        )
+        sync_info = (
+            audio_pipeline_result.get("sync", {})
             if isinstance(audio_pipeline_result, dict)
             else {}
         )
@@ -416,6 +421,114 @@ async def run_investigation(
                             )
         except Exception:
             # Safe degradation: transcription errors must not break investigation
+            pass
+
+        # Step 19: Real SyncNet Audio-Visual Synchronization integration
+        try:
+            if isinstance(sync_info, dict):
+                raw_sync_status = str(sync_info.get("status", "")).lower().strip()
+                if raw_sync_status not in ["unavailable", "error", "failed"]:
+                    raw_lip_sync_score = sync_info.get("lip_sync_score")
+                    if raw_lip_sync_score is not None:
+                        try:
+                            lip_sync_val = float(raw_lip_sync_score)
+                            is_valid_score = (
+                                not math.isnan(lip_sync_val)
+                                and not math.isinf(lip_sync_val)
+                                and 0.0 <= lip_sync_val <= 1.0
+                            )
+                        except (ValueError, TypeError):
+                            is_valid_score = False
+
+                        if is_valid_score:
+                            # Suspiciousness score: 1.0 - lip_sync_score
+                            # Good sync (e.g. 0.90) -> low suspiciousness (0.10)
+                            # Poor sync (e.g. 0.20) -> high suspiciousness (0.80)
+                            evidence_score = round(max(0.0, min(1.0, 1.0 - lip_sync_val)), 4)
+
+                            # Confidence calculation: use bounded value from SyncNet result or documented default 0.85
+                            if sync_info.get("confidence") is not None:
+                                try:
+                                    raw_conf = float(sync_info["confidence"])
+                                    sync_conf = round(max(0.0, min(1.0, raw_conf)), 4)
+                                except (ValueError, TypeError):
+                                    sync_conf = 0.85
+                            else:
+                                sync_conf = 0.85
+
+                            # Status mapping
+                            sync_status = "suspicious" if lip_sync_val < 0.50 else "normal"
+
+                            # Time range mapping
+                            sync_time_range = None
+                            valid_ranges: list[tuple[float, float]] = []
+                            raw_tr = sync_info.get("time_ranges")
+
+                            if isinstance(raw_tr, list):
+                                for r in raw_tr:
+                                    if isinstance(r, dict) and "start" in r and "end" in r:
+                                        try:
+                                            st = float(r["start"])
+                                            et = float(r["end"])
+                                            if (
+                                                not math.isnan(st)
+                                                and not math.isnan(et)
+                                                and st >= 0
+                                                and et >= st
+                                            ):
+                                                valid_ranges.append((st, et))
+                                        except (ValueError, TypeError):
+                                            continue
+                            elif isinstance(raw_tr, dict) and "start" in raw_tr and "end" in raw_tr:
+                                try:
+                                    st = float(raw_tr["start"])
+                                    et = float(raw_tr["end"])
+                                    if not math.isnan(st) and not math.isnan(et) and st >= 0 and et >= st:
+                                        valid_ranges.append((st, et))
+                                except (ValueError, TypeError):
+                                    pass
+
+                            if not valid_ranges and isinstance(sync_info.get("time_range"), dict):
+                                sing_tr = sync_info["time_range"]
+                                if "start" in sing_tr and "end" in sing_tr:
+                                    try:
+                                        st = float(sing_tr["start"])
+                                        et = float(sing_tr["end"])
+                                        if not math.isnan(st) and not math.isnan(et) and st >= 0 and et >= st:
+                                            valid_ranges.append((st, et))
+                                    except (ValueError, TypeError):
+                                        pass
+
+                            if valid_ranges:
+                                sync_time_range = TimeRange(
+                                    start=round(valid_ranges[0][0], 2),
+                                    end=round(valid_ranges[0][1], 2),
+                                )
+
+                            evidence.append(
+                                Evidence(
+                                    modality="audio_video",
+                                    signal="lip_sync",
+                                    score=evidence_score,
+                                    confidence=sync_conf,
+                                    status=sync_status,
+                                    time_range=sync_time_range,
+                                )
+                            )
+
+                            # Append suspicious timeline entries only if synchronization is suspicious
+                            if sync_status == "suspicious" and valid_ranges:
+                                for st, et in valid_ranges:
+                                    timeline.append(
+                                        TimelineItem(
+                                            start=round(st, 2),
+                                            end=round(et, 2),
+                                            label="Audio-video synchronization anomaly",
+                                            severity="high",
+                                        )
+                                    )
+        except Exception:
+            # Safe degradation: SyncNet errors must not break investigation
             pass
 
         # Timeline generation from video intervals if available
