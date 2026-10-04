@@ -36,6 +36,7 @@ export const InvestigationNewRoute = () => {
   const presets = [
     {
       id: 'P1',
+      investigationId: 'INV-2026-001',
       name: 'Executive Briefing (Tampered)',
       videoName: 'briefing_leak_h264.mp4',
       size: 24.8 * 1024 * 1024,
@@ -44,6 +45,7 @@ export const InvestigationNewRoute = () => {
     },
     {
       id: 'P2',
+      investigationId: 'INV-2026-002',
       name: 'UN Security Council (Authentic)',
       videoName: 'un_briefing_hq.mp4',
       size: 41.2 * 1024 * 1024,
@@ -52,6 +54,7 @@ export const InvestigationNewRoute = () => {
     },
     {
       id: 'P3',
+      investigationId: 'INV-2026-003',
       name: 'Surveillance Feed (Degraded)',
       videoName: 'cam04_alleyway_night.mp4',
       size: 8.4 * 1024 * 1024,
@@ -86,6 +89,14 @@ export const InvestigationNewRoute = () => {
     setAnalysisError(null);
     setTargetInvestigationId(null);
     targetIdRef.current = null;
+
+    // If using a Quick Preset, route directly to the pre-compiled investigation case
+    const selectedPreset = presets.find((p) => p.name === sampleLoaded || p.videoName === videoFile.name);
+    if (selectedPreset && !(videoFile instanceof File)) {
+      targetIdRef.current = selectedPreset.investigationId;
+      setTargetInvestigationId(selectedPreset.investigationId);
+      return;
+    }
 
     try {
       const newInvestigation = await investigationService.createInvestigation({

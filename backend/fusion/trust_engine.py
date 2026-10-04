@@ -26,7 +26,7 @@ class TrustEngine:
     # Configurable evaluation thresholds
     SYNTHETIC_HIGH_THRESHOLD: float = 0.65       # Score threshold indicating strong synthetic signal
     SYNTHETIC_LOW_THRESHOLD: float = 0.35        # Score threshold indicating normal/authentic signal
-    CONSISTENCY_HIGH_THRESHOLD: float = 0.70     # High consistency required for COORDINATED SYNTHETIC or AUTHENTIC
+    CONSISTENCY_HIGH_THRESHOLD: float = 0.65     # High consistency required for COORDINATED SYNTHETIC or AUTHENTIC
     MIN_COVERAGE_FOR_AUTHENTIC: float = 0.50     # Minimum modality coverage required to declare AUTHENTIC
     CONFIDENCE_THRESHOLD: float = 0.60           # Minimum confidence for strong signals and conflict detection
     SYNTHETIC_MAX_WEIGHT: float = 0.75           # Weight on peak anomaly to prevent dilution by authentic modalities
@@ -169,6 +169,12 @@ class TrustEngine:
             else:
                 # Spliced, isolated synthetic, or cross-modally inconsistent manipulation
                 verdict = Verdict.MANIPULATED
+
+        elif eff_consistency <= 0.35 or any(
+            e.status == "suspicious" for e in evidence if e.modality.lower() in ("consistency", "audio_video")
+        ):
+            # Severe cross-modal discordance / desync (e.g. lip sync mismatch or inconsistent signals)
+            verdict = Verdict.MANIPULATED
 
         elif synthetic_score <= self.synthetic_low_threshold and max_mod_score <= self.synthetic_low_threshold:
             # Low synthetic scores; check coverage and consistency

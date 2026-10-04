@@ -147,7 +147,12 @@ class FaceConsistencyDetector:
         cy = y + h // 2
 
         x1 = max(0, min(w_img - side, cx - side // 2))
-        y1 = max(0, min(h_img - side, cy - side // 2))
+
+        # Ensure forehead and hairline are preserved when side is constrained
+        desired_top = y - int(h * margin_pct)
+        ideal_y1 = min(cy - side // 2, desired_top)
+        y1 = max(0, min(h_img - side, ideal_y1))
+
         x2 = x1 + side
         y2 = y1 + side
 
