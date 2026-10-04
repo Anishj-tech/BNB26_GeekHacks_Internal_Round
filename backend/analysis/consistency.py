@@ -72,10 +72,20 @@ class ConsistencyAnalyzer:
             return self.default_consistency
 
         # 3. Compute representative score per modality (peak anomaly)
-        modality_scores = {
-            mod: max(item.score for item in items)
-            for mod, items in by_modality.items()
-        }
+        # Purely informative/baseline signals (like speech_transcript with status 'normal')
+        # are not synthetic anomalies and should not skew cross-modal anomaly agreement.
+        modality_scores = {}
+        for mod, items in by_modality.items():
+            anomalies = [
+                item.score for item in items
+                if not (item.signal.lower() == "speech_transcript" and item.status.lower() == "normal")
+            ]
+            if anomalies:
+                modality_scores[mod] = max(anomalies)
+
+        # Insufficient modality coverage to measure cross-modal agreement
+        if len(modality_scores) < 2:
+            return self.default_consistency
 
         # 4. Compute pairwise agreement across modalities: agreement = 1.0 - |s1 - s2|
         scores = list(modality_scores.values())

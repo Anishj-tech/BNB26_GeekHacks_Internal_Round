@@ -30,6 +30,11 @@ def _prepare_audio_waveform(audio_path: str, target_sr: int = 16000, nb_samp: in
         resampled_tensor = resampler(tensor_data)
         data = resampled_tensor.squeeze(0).numpy()
 
+    # Normalize peak amplitude to standard ASVspoof reference level (0.05) to prevent filter saturation
+    peak = float(np.max(np.abs(data)))
+    if peak > 0:
+        data = (data / peak) * 0.05
+
     # AASIST standard tiling/padding strategy for length normalization (approx 4.0375 seconds)
     x_len = data.shape[0]
     if x_len < nb_samp:

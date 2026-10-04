@@ -95,7 +95,7 @@ class VideoDetector:
         """
         bbox = detect_face(frame_bgr)
         if bbox is not None:
-            crop_bgr = extract_face_crop(frame_bgr, bbox, margin_pct=0.15)
+            crop_bgr = extract_face_crop(frame_bgr, bbox, margin_pct=0.25)
             face_detected = True
         else:
             # Fall back to center crop of full frame to focus on central visual subject
@@ -175,12 +175,14 @@ class VideoDetector:
         fake_scores = [fs.fake_score for fs in frame_scores]
 
         mean_score = float(np.mean(fake_scores))
-        top_k_count = max(1, int(np.ceil(len(fake_scores) * 0.25)))
-        sorted_scores = np.sort(fake_scores)
-        top_k_mean = float(np.mean(sorted_scores[-top_k_count:]))
+        if len(fake_scores) <= 4:
+            aggregated = 0.6 * mean_score + 0.4 * float(np.median(fake_scores))
+        else:
+            top_k_count = max(2, int(np.ceil(len(fake_scores) * 0.25)))
+            sorted_scores = np.sort(fake_scores)
+            top_k_mean = float(np.mean(sorted_scores[-top_k_count:]))
+            aggregated = 0.5 * mean_score + 0.5 * top_k_mean
 
-        # Balanced aggregation: sensitive to both clip-wide and localized manipulation
-        aggregated = 0.5 * mean_score + 0.5 * top_k_mean
         aggregated_score = round(float(np.clip(aggregated, 0.0, 1.0)), 4)
 
         # Uncertainty estimation:

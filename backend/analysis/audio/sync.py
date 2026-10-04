@@ -313,10 +313,30 @@ def check_av_sync(
                 f"estimated AV offset: {detected_offset_sec:+.3f}s (min dist: {min_dist:.2f}, conf: {conf:.2f})."
             )
 
+            # Normalize confidence: SyncNet conf typically ranges 0.0 to 4.0+ where >= 2.0 is high confidence
+            norm_confidence = round(float(max(0.0, min(1.0, conf / 2.0))), 4)
+
+            # If confidence is below statistical threshold, AV sync cannot be reliably verified
+            # Treat as unavailable rather than falsely asserting 100% desync manipulation
+            if conf < 1.5 and min_dist > 7.5:
+                return {
+                    "status": "unavailable",
+                    "model": "SyncNet-v2",
+                    "lip_sync_score": None,
+                    "confidence": norm_confidence,
+                    "detected_offset_seconds": None,
+                    "time_ranges": [],
+                    "message": (
+                        f"SyncNet correlation below threshold (min dist: {min_dist:.2f}, conf: {conf:.2f}). "
+                        f"Audio-visual alignment unverified."
+                    ),
+                }
+
             return {
                 "status": "success",
                 "model": "SyncNet-v2",
                 "lip_sync_score": lip_sync_score,
+                "confidence": norm_confidence,
                 "detected_offset_seconds": detected_offset_sec,
                 "time_ranges": time_ranges,
                 "message": msg,

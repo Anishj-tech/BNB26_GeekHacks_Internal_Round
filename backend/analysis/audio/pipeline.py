@@ -141,6 +141,7 @@ def run_audio_pipeline(
         )
         sync_section = {
             "lip_sync_score": sync_raw.get("lip_sync_score"),
+            "confidence": sync_raw.get("confidence"),
             "detected_offset_seconds": sync_raw.get("detected_offset_seconds"),
             "model": sync_raw.get("model"),
             "status": sync_raw.get("status", "unavailable"),

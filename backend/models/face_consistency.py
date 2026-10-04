@@ -137,13 +137,19 @@ class FaceConsistencyDetector:
         h_img, w_img = frame_bgr.shape[:2]
         x, y, w, h = bbox
 
-        mx = int(w * margin_pct)
-        my = int(h * margin_pct)
+        # Use symmetric square bounding region so face aspect ratio is not distorted
+        max_dim = max(w, h)
+        side = int(max_dim * (1.0 + 2 * margin_pct))
+        max_possible_side = min(h_img, w_img)
+        side = min(side, max_possible_side)
 
-        x1 = max(0, x - mx)
-        y1 = max(0, y - my)
-        x2 = min(w_img, x + w + mx)
-        y2 = min(h_img, y + h + my)
+        cx = x + w // 2
+        cy = y + h // 2
+
+        x1 = max(0, min(w_img - side, cx - side // 2))
+        y1 = max(0, min(h_img - side, cy - side // 2))
+        x2 = x1 + side
+        y2 = y1 + side
 
         crop = frame_bgr[y1:y2, x1:x2]
         if crop.size == 0:

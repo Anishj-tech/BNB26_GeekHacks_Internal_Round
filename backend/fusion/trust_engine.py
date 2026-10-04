@@ -100,10 +100,18 @@ class TrustEngine:
             by_modality.setdefault(item.modality.lower(), []).append(item)
 
         # Compute peak anomaly score for each modality
-        modality_scores: dict[str, float] = {
-            mod: max(item.score for item in items)
-            for mod, items in by_modality.items()
-        }
+        # Purely informative/baseline signals (like speech_transcript with status 'normal')
+        # are not synthetic anomalies and should not drive synthetic anomaly scores.
+        modality_scores: dict[str, float] = {}
+        for mod, items in by_modality.items():
+            anomalies = [
+                item.score for item in items
+                if not (item.signal.lower() == "speech_transcript" and item.status.lower() == "normal")
+            ]
+            if anomalies:
+                modality_scores[mod] = max(anomalies)
+            else:
+                modality_scores[mod] = 0.0
 
         # 4. Compute overall synthetic score
         # Genuine modalities must not dilute strong suspicious signals in another modality.
